@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>swish-loader responsive check</title>
+    <link rel="stylesheet" href="../loader/swish-loader.css" />
+    <style>
+      body { font: 12px ui-monospace, Consolas, monospace; margin: 0; }
+      .box { overflow: hidden; }
+      #stack { position: absolute; left: 0; top: 0; visibility: hidden; }
+      pre { margin: 0; padding: 1rem; }
+      .pass { color: #0a0; }
+      .fail { color: #c00; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <div id="stack"></div>
+    <pre id="out">running…</pre>
+
+    <script type="module">
+      import { createSwishLoader } from '../loader/swish-loader.js';
+
+      const stack = document.getElementById('stack');
+      const results = [];
+      const ok = (name, cond, detail = '') =>
+        results.push({ name, pass: !!cond, detail: String(detail) });
+      const settle = (ms = 40) => new Promise((r) => setTimeout(r, ms));
+
+      /**
+       * Everything is measured as a FRACTION of the rendered stage box.
+       * If the loader is genuinely resolution-independent these fractions are
+       * identical at every width; if anything were pinned to pixels or to the
+       * viewport, they would drift.
+       */
+      function probe(root) {
+        const svg = root.querySelector('svg');
+        const sb = svg.getBoundingClientRect();
+        const f = (el) => {
+          const b = el.getBoundingClientRect();
+          return {
+            cx: (b.left + b.width / 2 - sb.left) / sb.width,
+            cy: (b.top + b.height / 2 - sb.top) / sb.height,
+            w: b.width / sb.width
+          };
+        };
+        const bag = f(root.querySelector('.swish-loader__bag'));
+        const scale = f(root.querySelector('.swish-loader__scale'));
+        const led = f(root.querySelector('.swish-loader__led'));
+        const lines = [...root.querySelectorAll('.swish-loader__streaks line')].map(f);
+        const db = root.querySelector('.swish-loader__ring').getBoundingClientRect();
+        const ringEl = root.querySelector('.swish-loader__ring');
+        const rb = ringEl.getBoundingClientRect();
+        const ring = f(ringEl);
+        return {
+          ringVsScale: { dx: ring.cx - scale.cx, dy: ring.cy - scale.cy },
+          ringW: ring.w,
+          ringRound: rb.height ? rb.width / rb.height : 0,
+          ringInStage: rb.bottom <= sb.bottom + 0.5 && rb.top >= sb.top - 0.5 &&
+                       rb.left >= sb.left - 0.5 && rb.right <= sb.right + 0.5,
+          doneW: db.width / sb.width,
+          doneRound: db.height ? db.width / db.height : 0,
+          doneInStage: db.bottom <= sb.bottom + 0.5 && db.left >= sb.left - 0.5 &&
+                       db.right <= sb.right + 0.5,
+          w: sb.width,
+          h: sb.height,
+          aspect: sb.width / sb.height,
+          // offsets RELATIVE to the element each thing must stay attached to
+          ledVsScale: { dx: led.cx - scale.cx, dy: led.cy - scale.cy },
+          lineVsBag: lines.map((L) => ({ dx: L.cx - bag.cx, dy: L.cy - bag.cy })),
+          lineCount: lines.length
+        };
+      }
+
+      const near = (a, b, eps = 0.002) => Math.abs(a - b) <= eps;
+
+      function sameAttachment(a, b) {
+        if (a.lineCount !== b.lineCount) return false;
+        if (!near(a.ledVsScale.dx, b.ledVsScale.dx) || !near(a.ledVsScale.dy, b.ledVsScale.dy))
+          return false;
+        return a.lineVsBag.every(
+          (L, i) => near(L.dx, b.lineVsBag[i].dx) && near(L.dy, b.lineVsBag[i].dy)
+        );
+      }
+
+      async function make(width) {
+        const box = document.createElement('div');
+        box.className = 'box';
+        box.style.width = width + 'px';
+        stack.appendChild(box);
+        const l = createSwishLoader({ mount: box, loop: true });
+        for (let i = 0; i < 40 && !l.root.classList.contains('is-ready'); i++) await settle(25);
+        return { box, l };
+      }
+
+      async function run() {
+        // 200px ~ a phone-sized slot, 360 ~ tablet, 820 ~ desktop hero.
+        const widths = [200, 360, 820];
+        const snaps = [];
+
+        for (const w of widths) {
+          const { box, l } = await make(w);
+          l.__debug.scrub(450); // streaks visible, bag mid-fall
+          const s = probe(l.root);
+          snaps.push({ w, s, l, box });
+          ok(`renders at ${w}px container`, s.w > 0 && s.lineCount === 2,
+            `${s.w.toFixed(0)}x${s.h.toFixed(0)} lines=${s.lineCount}`);
+          ok(`aspect held at ${w}px`, near(s.aspect, 400 / 420, 0.01), s.aspect.toFixed(4));
+          ok(`ring circular at ${w}px`, near(s.ringRound, 1, 0.02), s.ringRound.toFixed(4));
+          ok(`ring unclipped at ${w}px`, s.ringInStage);
+          ok(`done badge circular at ${w}px`, near(s.doneRound, 1, 0.03), s.doneRound.toFixed(4));
+          ok(`done badge unclipped at ${w}px`, s.doneInStage);
+        }
+
+        // Cross-width: attachment offsets must be identical everywhere.
+        for (let i = 1; i < snaps.length; i++) {
+          ok(`ring holds its place and size at ${snaps[i].w}px`,
+            near(snaps[i].s.ringVsScale.dx, snaps[0].s.ringVsScale.dx, 0.002) &&
+            near(snaps[i].s.ringVsScale.dy, snaps[0].s.ringVsScale.dy, 0.002) &&
+            near(snaps[i].s.ringW, snaps[0].s.ringW, 0.002),
+            `dy ${snaps[i].s.ringVsScale.dy.toFixed(4)} w ${snaps[i].s.ringW.toFixed(4)}`);
+          ok(`done badge holds its size at ${snaps[i].w}px`,
+            near(snaps[i].s.doneW, snaps[0].s.doneW, 0.002), snaps[i].s.doneW.toFixed(4));
+          ok(`attachment identical at ${snaps[i].w}px vs ${snaps[0].w}px`,
+            sameAttachment(snaps[0].s, snaps[i].s),
+            JSON.stringify(snaps[i].s.ledVsScale) + ' / ' + JSON.stringify(snaps[0].s.ledVsScale));
+        }
+
+        // A real resize of a live instance, mid-animation.
+        {
+          const { box, l } = snaps[1];
+          const before = probe(l.root);
+          box.style.width = '150px';
+          window.dispatchEvent(new Event('resize'));
+          await settle(120);
+          l.__debug.scrub(450);
+          const shrunk = probe(l.root);
+          ok('shrinking the container mid-animation keeps attachment',
+            sameAttachment(before, shrunk) && shrunk.w < before.w,
+            `${before.w.toFixed(0)} -> ${shrunk.w.toFixed(0)}`);
+
+          box.style.width = '700px';
+          window.dispatchEvent(new Event('resize'));
+          await settle(120);
+          l.__debug.scrub(450);
+          const grown = probe(l.root);
+          ok('growing the container mid-animation keeps attachment',
+            sameAttachment(before, grown),
+            `${before.w.toFixed(0)} -> ${grown.w.toFixed(0)}`);
+        }
+
+        // Simulated orientation change: swap the page's aspect via the container.
+        {
+          const { box, l } = snaps[2];
+          l.__debug.scrub(450);
+          const landscape = probe(l.root);
+          box.style.width = '300px';
+          window.dispatchEvent(new Event('orientationchange'));
+          await settle(120);
+          l.__debug.scrub(450);
+          const portrait = probe(l.root);
+          ok('orientation change keeps attachment',
+            sameAttachment(landscape, portrait));
+        }
+
+        // The LED must be lit at every width, from the first frame.
+        for (const { w, l } of snaps) {
+          l.__debug.scrub(0);
+          const led = l.root.querySelector('.swish-loader__led');
+          ok(`green indicator lit at t=0, ${w}px`,
+            parseFloat(led.getAttribute('opacity')) === 1 &&
+            led.getBoundingClientRect().width > 0);
+        }
+
+        for (const { l } of snaps) l.destroy();
+
+        const failed = results.filter((r) => !r.pass);
+        document.getElementById('out').innerHTML =
+          results.map((r) =>
+            `<span class="${r.pass ? 'pass' : 'fail'}">${r.pass ? 'PASS' : 'FAIL'}</span>  ${r.name}` +
+            (r.detail && !r.pass ? `   [${r.detail}]` : '')).join('\n') +
+          `\n\nRESULT ${results.length - failed.length}/${results.length} passed`;
+        document.title = failed.length ? `FAIL ${failed.length}` : 'ALL PASS';
+      }
+
+      run().catch((e) => {
+        document.getElementById('out').textContent = 'HARNESS ERROR: ' + (e && e.stack || e);
+        document.title = 'HARNESS ERROR';
+      });
+    </script>
+  </body>
+</html>

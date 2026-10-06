@@ -1,0 +1,262 @@
+/**
+ * SWiSH - Bag-on-Scale Loading Animation
+ * Layout, typography and the responsive / accessibility envelope.
+ *
+ * The page stays PURE WHITE for the whole animation. No gradients, no
+ * vignette, no tinted overlay at any point on the timeline.
+ */
+
+.swish-loader {
+  --swish-green: #00c853;
+  --swish-green-hot: #3dff8a;
+  --swish-ink: #111111;
+  --swish-stage-bg: #ffffff;
+
+  /* Fluid, viewport-relative, and bounded at both ends: never a postage
+     stamp on a phone, never a full-screen bag on a 4K monitor. */
+  --swish-size: clamp(170px, 42vmin, 340px);
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  max-width: 100%;
+  background: var(--swish-stage-bg);
+  /* Text zoom must not resize the stage; `vmin` handles that, but keep the
+     caption on a predictable ramp. */
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Full-screen overlay variant. */
+.swish-loader--overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+    max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+}
+
+.swish-loader__stage {
+  /* `vmin` measures the VIEWPORT, so --swish-size alone would overflow any
+     container narrower than it - a 340px stage inside a 240px card. The
+     min() clamps to whatever space the parent actually gives us, which is
+     what makes this safe to drop into a sidebar, a modal or a card, not
+     just a full-screen overlay. */
+  width: min(100%, var(--swish-size));
+  /* Matches the 400x420 viewBox, so the box never disagrees with the art. */
+  aspect-ratio: 400 / 420;
+  opacity: 0;
+  transition: opacity 260ms ease;
+}
+
+/* Fallback for browsers without aspect-ratio (older Safari). */
+@supports not (aspect-ratio: 1) {
+  .swish-loader__stage {
+    height: calc(min(100%, var(--swish-size)) * 1.05);
+  }
+}
+
+.swish-loader.is-ready .swish-loader__stage {
+  opacity: 1;
+}
+
+.swish-loader__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* Must clip: the bag spawns above the viewBox and would otherwise be
+     painted over whatever sits above the stage on the way in. */
+  overflow: hidden;
+}
+
+/* Promote only the layers that actually move, and only while they move.
+   A permanently promoted layer costs memory and buys nothing. */
+.swish-loader.is-animating .swish-loader__bag,
+.swish-loader.is-animating .swish-loader__scale,
+.swish-loader.is-animating .swish-loader__streaks {
+  will-change: transform;
+}
+
+.swish-loader.is-static .swish-loader__bag,
+.swish-loader.is-static .swish-loader__scale,
+.swish-loader.is-complete .swish-loader__bag,
+.swish-loader.is-complete .swish-loader__scale {
+  will-change: auto;
+}
+
+/* --- digital readout -------------------------------------------------
+   Monospace by necessity: the glyph grid in the JS assumes a fixed advance
+   width, so a proportional fallback would drift. Drop in a real dot-matrix
+   face (DSEG, Digital-7) at the FRONT of this stack for exact fidelity -
+   nothing else needs to change. */
+.swish-loader__glyph {
+  font-family: "DSEG14 Classic", "Digital-7", ui-monospace, "SF Mono", "Cascadia Mono",
+    Menlo, Consolas, "Liberation Mono", monospace;
+  font-weight: 700;
+  letter-spacing: 0;
+  fill: var(--swish-green);
+
+  /* FLAT TYPOGRAPHY, DELIBERATELY. The letters are solid fill and nothing
+     else: no blur, no halo, no offset duplicate, no stroke, no bevel. The
+     group above them carries no SVG filter either (see -led in the JS: the
+     halo belongs to the standby LED alone), so these declarations are a
+     guard against one being reintroduced here rather than the mechanism.
+
+     Flat is also what keeps it sharp everywhere. A filtered SVG subtree is
+     rasterised into an offscreen buffer whose resolution is fixed at paint
+     time, which is what softens type on a high-DPR phone or under browser
+     zoom; an unfiltered glyph is scan-converted at the device's own
+     resolution at every scale. */
+  filter: none;
+  text-shadow: none;
+  stroke: none;
+  paint-order: fill;
+  /* The readout is painted, never selected or hit-tested. */
+  user-select: none;
+  pointer-events: none;
+}
+
+/* --- long-load escalation -------------------------------------------- */
+.swish-loader__note {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: rgba(17, 17, 17, 0.5);
+  text-align: center;
+  animation: swish-note-in 400ms ease both;
+}
+
+@keyframes swish-note-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.swish-loader__retry {
+  font: inherit;
+  color: var(--swish-green);
+  background: none;
+  border: 0;
+  padding: 0 0 1px;
+  border-bottom: 1px solid currentColor;
+  cursor: pointer;
+}
+
+.swish-loader__retry:focus-visible {
+  outline: 2px solid var(--swish-green);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* --- last-resort fallback (layer decode or stage build failed) -------- */
+.swish-loader__fallback {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: clamp(1.5rem, 6vmin, 2.5rem);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--swish-ink);
+  animation: swish-breathe 2s ease-in-out infinite;
+}
+
+@keyframes swish-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* --- screen-reader-only text ------------------------------------------ */
+.swish-loader__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* =====================================================================
+ * Exception envelopes
+ * ===================================================================== */
+
+/* Reduced motion: the JS already renders the final composed state and stops
+   the rAF loop. This kills the CSS-side animations too, and keeps a single
+   gentle opacity breathe as the only movement - enough to read as "working"
+   without any vestibular risk. */
+@media (prefers-reduced-motion: reduce) {
+  .swish-loader__stage {
+    transition: none;
+  }
+
+  .swish-loader__note {
+    animation: none;
+  }
+
+  .swish-loader.is-static .swish-loader__stage {
+    animation: swish-breathe-soft 2s ease-in-out infinite;
+  }
+
+  .swish-loader__fallback {
+    animation: swish-breathe-soft 2s ease-in-out infinite;
+  }
+}
+
+@keyframes swish-breathe-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.92;
+  }
+}
+
+/* Degraded mode: filters are the expensive part, so they go first. Motion
+   stays smooth; only the garnish is shed. The readout itself has nothing to
+   shed - it is already flat - so this only reaches anything a future change
+   might hang on the display group. */
+.swish-loader.is-degraded .swish-loader__display {
+  filter: none !important;
+}
+
+/* Windows High Contrast / forced colours: the OS overrides our palette, so
+   drop the filters and let the shapes carry themselves. */
+@media (forced-colors: active) {
+  .swish-loader__display,
+  .swish-loader__fallback {
+    filter: none !important;
+    forced-color-adjust: none;
+  }
+
+  .swish-loader__glyph {
+    fill: CanvasText;
+  }
+
+  .swish-loader__note {
+    color: CanvasText;
+  }
+}
+
+/* A loader has no business on paper. */
+@media print {
+  .swish-loader {
+    display: none !important;
+  }
+}

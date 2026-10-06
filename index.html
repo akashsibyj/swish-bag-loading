@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>SWiSH</title>
+    <meta name="description" content="SWiSH loading animation." />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="stylesheet" href="./loader/swish-loader.css" />
+    <style>
+      /* The page is only a host for the loader. The loader brings its own
+         layout, its own sizing and its own reduced-motion handling; nothing
+         here needs to know about any of that. */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #fff;
+        color: #111;
+        font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+
+      #host {
+        /* svh, not vh: on mobile browsers vh includes the collapsing URL bar,
+           so a centred child drifts as the bar hides. */
+        min-height: 100svh;
+        display: grid;
+        place-items: center;
+        padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+          max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+        box-sizing: border-box;
+      }
+
+      /* The stage is already clamped to its container (see swish-loader.css);
+         this just sets how large it is allowed to get. vmin keeps it whole on
+         a short landscape window as well as a narrow portrait one. */
+      .swish-loader {
+        --swish-size: min(340px, 78vmin);
+      }
+
+      /* Older Safari has no svh. */
+      @supports not (height: 100svh) {
+        #host {
+          min-height: 100vh;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="host"></div>
+
+    <script type="module">
+      import { createSwishLoader } from './loader/swish-loader.js';
+
+      const host = document.getElementById('host');
+      let loader = null;
+
+      function build() {
+        if (loader) loader.destroy();
+        loader = createSwishLoader({ mount: host, loop: true, minDuration: 900 });
+      }
+
+      // The loader dispatches this from its own 30s "taking longer than usual"
+      // affordance. Rebuilding is the honest response: it is the same thing a
+      // user pressing retry would expect.
+      host.addEventListener('swish-retry', build);
+
+      build();
+    </script>
+  </body>
+</html>

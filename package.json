@@ -1,0 +1,39 @@
+{
+  "name": "swish-bag-loader",
+  "version": "1.0.0",
+  "description": "SWiSH bag-on-scale loading animation - a composed, continuously interpolated SVG scene with no runtime dependencies.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "./loader/swish-loader.js",
+  "exports": {
+    ".": "./loader/swish-loader.js",
+    "./react": "./loader/react/SwishLoader.jsx",
+    "./style.css": "./loader/swish-loader.css"
+  },
+  "files": [
+    "loader"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "vite",
+    "dev": "vite",
+    "build": "vite build",
+    "build:harness": "node tools/build-harness.mjs",
+    "preview": "vite preview",
+    "test": "node tools/run-tests.mjs",
+    "test:install": "playwright install chromium",
+    "assets": "python tools/build-assets.py"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1",
+    "vite": "^6.0.7"
+  },
+  "dependencies": {
+    "motion": "^13.4.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  }
+}

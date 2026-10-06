@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../loader/swish-loader.css">
+<style>html,body{margin:0;background:#fff}#h{display:grid;place-items:center;height:100vh}.swish-loader{width:100%}/* deterministic capture: no fade to catch mid-flight */.swish-loader__stage{transition:none!important}</style>
+</head><body><div id="h"></div>
+<script type="module">
+import {createSwishLoader} from '../loader/swish-loader.js';
+const t=+(new URLSearchParams(location.search).get('t')||0);
+const L=createSwishLoader({mount:document.getElementById('h'),loop:true});
+const sz=new URLSearchParams(location.search).get('size');
+if(sz) L.root.style.setProperty('--swish-size',sz);
+setTimeout(()=>{L.__debug.scrub(t);document.title='ready-'+t;},400);
+</script></body></html>

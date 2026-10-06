@@ -1,0 +1,44 @@
+# --- build output & tooling -------------------------------------------------
+node_modules/
+dist/
+.vite/
+*.log
+__pycache__/
+*.py[cod]
+.vercel/
+.DS_Store
+Thumbs.db
+
+# --- development material, deliberately not committed -----------------------
+# None of this is needed to build, test or deploy. It is kept on disk because
+# it is the raw material the loader was derived from, but it is large and it
+# would make the repository slow to clone for no benefit.
+#
+# The two source SVGs the pipeline actually reads ARE committed, so the asset
+# pipeline stays reproducible from a fresh checkout. The other seven exports
+# are composed reference scenes - bag already resting on the scale, display
+# already reading SWi.. - that nothing reads; together they are ~3.8 MB.
+assets/*
+!assets/bag straight.svg
+!assets/scale.svg
+
+# Abandoned first attempt (a CSS/React "motion" build) and the video frames it
+# was graded against. Nothing in the tree imports either.
+src/
+ref_frames/
+verify/
+
+# Reference stills, screen recordings and the original composed renders.
+reference/
+*.mp4
+*.webm
+/*.png
+
+# Superseded copy of the React wrapper. The shipped one is loader/react/.
+/react/
+
+# Tools for the abandoned frame-by-frame comparison workflow. They read the
+# screen recording and write into ref_frames/ and verify/ - none of which is
+# committed - so they would be broken references in a fresh checkout.
+tools/extract-frames.mjs
+tools/verify-frames.mjs

@@ -1,0 +1,1207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>swish-loader self test</title>
+    <link rel="stylesheet" href="../loader/swish-loader.css" />
+    <style>
+      body { font: 13px ui-monospace, Consolas, monospace; margin: 1rem; }
+      #host { position: absolute; left: 0; top: 0; visibility: hidden; }
+      .pass { color: #0a0; }
+      .fail { color: #c00; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <div id="host"></div>
+    <pre id="out">running…</pre>
+
+    <script type="module">
+      import { createSwishLoader, TIMELINE, GEOMETRY as G } from '../loader/swish-loader.js';
+
+      /**
+       * Console errors the runner should NOT treat as failures: this suite
+       * deliberately provokes them to prove the loader contains them. Anything
+       * not listed here still fails the run.
+       */
+      window.__expectedConsoleErrors = ['[swish-loader] onComplete threw'];
+
+      const host = document.getElementById('host');
+      const results = [];
+      const ok = (name, cond, detail = '') =>
+        results.push({ name, pass: !!cond, detail: String(detail) });
+
+      const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms));
+      const q = (root, sel) => root.querySelector(sel);
+      const op = (node) => parseFloat(node.getAttribute('opacity') || '1');
+
+      async function make(opts = {}) {
+        const l = createSwishLoader({ mount: host, ...opts });
+        // wait for the data-URI decode + start()
+        for (let i = 0; i < 40 && !l.root.classList.contains('is-ready'); i++) await settle(25);
+        return l;
+      }
+
+      async function run() {
+        /* ---------- 1. structure & accessibility ---------- */
+        {
+          const l = await make({ loop: true });
+          const r = l.root;
+          ok('root is a live status region',
+            r.getAttribute('role') === 'status' && r.getAttribute('aria-live') === 'polite');
+          ok('svg hidden from assistive tech',
+            q(r, 'svg').getAttribute('aria-hidden') === 'true');
+          ok('screen-reader text present',
+            q(r, '.swish-loader__sr')?.textContent.trim() === 'Loading, please wait');
+          ok('display glyphs are live <text>, not a raster',
+            q(r, 'svg').querySelectorAll('text').length === 10);
+          ok('exactly two raster layers (bag + scale)',
+            q(r, 'svg').querySelectorAll('image').length === 2,
+            q(r, 'svg').querySelectorAll('image').length);
+          ok('no full-scene raster anywhere',
+            ![...q(r, 'svg').querySelectorAll('image')]
+              .some((i) => /loading|falling|fell/i.test(i.getAttribute('href') || '')));
+          l.destroy();
+        }
+
+        /* ---------- 2. timeline is a pure function of t ---------- */
+        {
+          const l = await make({ loop: true });
+          const r = l.root;
+          const bag = q(r, '.swish-loader__bag');
+          const glyphs = [...q(r, 'svg').querySelectorAll('text')];
+
+          l.__debug.scrub(0);
+          const at0 = bag.getAttribute('transform');
+          l.__debug.scrub(1500);
+          l.__debug.scrub(0);
+          ok('same t renders the same frame (pure)', bag.getAttribute('transform') === at0);
+
+          const svgBox = () => q(r, 'svg').getBoundingClientRect();
+
+          /* ---- entry: the bag comes DOWN INTO the frame from above it ----
+             The reveal is the fall. getBoundingClientRect() reports the bag's
+             full laid-out box whether or not the frame clips it, so the
+             visible share is the overlap of that box with the stage. */
+          const visible = (t) => {
+            l.__debug.scrub(t);
+            const sb = svgBox();
+            const bb = bag.getBoundingClientRect();
+            const shown = Math.min(bb.bottom, sb.bottom) - Math.max(bb.top, sb.top);
+            return { frac: Math.max(0, shown) / bb.height, bb, sb };
+          };
+          {
+            const v0 = visible(0);
+            ok('only the bag base is in view at t=0',
+              Math.abs(v0.frac - G.ENTRY_VISIBLE) < 0.03,
+              `${(100 * v0.frac).toFixed(0)}% showing, want ${(100 * G.ENTRY_VISIBLE).toFixed(0)}%`);
+            ok('the rest of the bag starts ABOVE the frame, not faded out',
+              v0.bb.top < v0.sb.top - 1,
+              `top edge ${(v0.bb.top - v0.sb.top).toFixed(0)}px above the stage`);
+            // Not a fade: the node is fully opaque on the frame it is cropped.
+            const img = q(r, '.swish-loader__bag').querySelector('image') ||
+              q(r, '.swish-loader__bag');
+            ok('entry uses motion, not opacity',
+              parseFloat(img.getAttribute('opacity') ?? '1') === 1,
+              img.getAttribute('opacity') ?? 'none set');
+
+            // More of it every frame, never less, until it is whole.
+            let prev = -1, regressed = [];
+            for (let t = 0; t <= 600; t += 25) {
+              const f = visible(t).frac;
+              if (f < prev - 0.005) regressed.push(t);
+              prev = f;
+            }
+            ok('more of the bag is in view every frame of the fall',
+              regressed.length === 0,
+              regressed.length ? `went backwards at ${regressed.join(',')}ms` : 'monotonic');
+
+            // Whole well before contact, and whole for the landing itself.
+            let wholeAt = null;
+            for (let t = 0; t <= 600; t += 5) {
+              if (visible(t).frac > 0.999) { wholeAt = t; break; }
+            }
+            ok('the whole bag is in view before it lands',
+              wholeAt !== null && wholeAt < 600 - 120,
+              wholeAt === null ? 'never whole' : `whole from ${wholeAt}ms, ${600 - wholeAt}ms before contact`);
+
+            // The bottom edge is the one thing that must never be cropped:
+            // the base is what the landing is read against.
+            let lowCut = [];
+            for (let t = 0; t <= 1200; t += 25) {
+              const v = visible(t);
+              if (v.bb.bottom > v.sb.bottom + 0.5) lowCut.push(t);
+            }
+            ok('the bag is never clipped at the BOTTOM', lowCut.length === 0,
+              lowCut.length ? `clipped at ${lowCut.join(',')}ms` : 'base always in frame');
+          }
+          {
+            l.__debug.scrub(0);
+            const sb = svgBox();
+            const bb = bag.getBoundingClientRect();
+            const gap = (sb.top + sb.height * (G.PLATE_TOP_Y / G.VB_H)) - bb.bottom;
+            ok('bag starts clearly above the scale', gap / sb.height > 0.25,
+              `${(100 * gap / sb.height).toFixed(0)}% of stage above the plate`);
+          }
+          ok('an intro fade exists to cover the loop seam', TIMELINE.INTRO >= 100);
+
+          /* ---- the fall: higher start, sway, settle ---- */
+          const xf = (t) => { l.__debug.scrub(t); return bag.getAttribute('transform'); };
+          const squash = q(r, '.swish-loader__bag-squash');
+          // Every transform anywhere in the bag's subtree, for the whole cycle.
+          const allXf = (t) => {
+            l.__debug.scrub(t);
+            return [bag, squash, ...bag.querySelectorAll('*')]
+              .map((e) => e.getAttribute('transform') || '').join(' | ');
+          };
+          const yAt = (t) => parseFloat(/translate\(0 (-?[\d.]+)\)/.exec(xf(t))[1]);
+
+          // 1. starts noticeably higher, and the height is travelled, not jumped
+          ok('bag starts a full drop above its resting place',
+            Math.abs(yAt(0) - G.DROP_FROM) < 0.5, `${yAt(0).toFixed(1)} vs ${G.DROP_FROM.toFixed(1)}`);
+          ok('the drop is travelled continuously',
+            yAt(0) < yAt(150) && yAt(150) < yAt(300) &&
+            yAt(300) < yAt(450) && yAt(450) < yAt(580),
+            [0, 150, 300, 450, 580].map(yAt).map((v) => v.toFixed(0)).join(' -> '));
+
+          // 2. NEVER rotates. Not falling, not landing, not settling.
+          {
+            const samples = [];
+            for (let t = 0; t <= 2700; t += 25) samples.push(t);
+            // Not "rotation is zero" - there is no rotate() in the document to
+            // BE non-zero. Same for skew and matrix, which could smuggle one in.
+            const spun = samples.filter((t) => /rotate|skew|matrix/.test(allXf(t)));
+            ok('no rotation exists anywhere in the bag subtree', spun.length === 0,
+              spun.length ? `first at ${spun[0]}ms: ${allXf(spun[0])}`
+                          : `clean across ${samples.length} frames`);
+
+            // The fall itself is one term on one group, and nothing else.
+            const bad = samples.filter(
+              (t) => !/^translate\(0 -?[\d.]+\)$/.test(xf(t)));
+            ok('the fall transform is translateY and nothing else',
+              bad.length === 0,
+              bad.length ? `first at ${bad[0]}ms: "${xf(bad[0])}"` : xf(300));
+          }
+
+          // 3. only y moves during the fall - x, rotation and scale are fixed
+          {
+            const sc = (t) => {
+              l.__debug.scrub(t);
+              const m = /scale\(([-\d.]+) ([-\d.]+)\)/.exec(
+                squash.getAttribute('transform') || '');
+              return m ? [parseFloat(m[1]), parseFloat(m[2])] : [NaN, NaN];
+            };
+            const fall = [0, 100, 200, 300, 400, 500, 599];
+            ok('scale is unchanged throughout the fall',
+              fall.every((t) => sc(t)[0] === 1 && sc(t)[1] === 1),
+              fall.map((t) => sc(t).join('/')).join(' '));
+            ok('y is the only thing moving during the fall',
+              Math.abs(yAt(300) - yAt(250)) > 1 &&
+              sc(300)[0] === sc(250)[0] && sc(300)[1] === sc(250)[1] &&
+              xf(300).replace(/-?[\d.]+\)$/, '') === xf(250).replace(/-?[\d.]+\)$/, ''),
+              `dy=${(yAt(300) - yAt(250)).toFixed(1)}`);
+          }
+
+          // 4. arrives level, and the bounce does not introduce any roll
+          ok('bag reaches the scale perfectly level', !/rotate/.test(allXf(600)));
+          {
+            const seq = [600, 660, 700, 760, 840, 900, 960, 1040, 1120];
+            ok('the bounce introduces no roll',
+              seq.every((t) => !/rotate/.test(allXf(t))));
+            // ...but it IS a bounce: the bag still compresses and springs.
+            ok('the bounce is still there vertically',
+              yAt(645) > yAt(600) && yAt(760) < yAt(600) - 5 * G.U,
+              `${yAt(600).toFixed(1)} -> ${yAt(645).toFixed(1)} -> ${yAt(760).toFixed(1)}`);
+          }
+
+          // 6. ends exactly level, and stays there
+          {
+            const tail = [1200, 1400, 1700, 2100, 2500, 2700];
+            ok('bag ends perfectly level and stays level',
+              tail.every((t) => !/rotate/.test(allXf(t))));
+            ok('resting transform is a pure vertical offset',
+              /^translate\(0 -?[\d.]+\)$/.test(xf(2100)), xf(2100));
+          }
+
+          // 7. nothing teleports, nothing snaps - sampled every frame
+          {
+            let mr = 0, my = 0, mrAt = 0, myAt = 0;
+            let py = yAt(0);
+            for (let t = 16; t <= 1300; t += 16) {
+              const cy = yAt(t);
+              if (Math.abs(cy - py) > my) { my = Math.abs(cy - py); myAt = t; }
+              py = cy;
+            }
+            ok('no rotation to snap', mr === 0, 'no rotate() exists');
+            // 18-19u/frame is terminal velocity on a 420-unit stage; a seam
+            // discontinuity would show up far above that.
+            ok('position never teleports', my < 24, `max ${my.toFixed(1)}u at ${myAt}ms`);
+          }
+
+          // 7b. accelerates, then cushions into the plate (storyboard)
+          {
+            const speeds = [];
+            for (let t = 32; t <= 600; t += 32) speeds.push({ t, v: Math.abs(yAt(t) - yAt(t - 32)) });
+            const peak = speeds.reduce((a, b) => (b.v > a.v ? b : a));
+            const atContact = speeds[speeds.length - 1].v;
+            ok('the fall accelerates from rest',
+              speeds[0].v < speeds[4].v && speeds[4].v < peak.v,
+              `${speeds[0].v.toFixed(1)} -> ${speeds[4].v.toFixed(1)} -> ${peak.v.toFixed(1)}`);
+            ok('it peaks before contact, not at it', peak.t < 560, `peak at ${peak.t}ms`);
+            ok('it eases as it nears the plate', atContact < peak.v * 0.92,
+              `${peak.v.toFixed(1)} -> ${atContact.toFixed(1)} u/frame ` +
+              `(-${(100 * (1 - atContact / peak.v)).toFixed(0)}%)`);
+          }
+
+          // 7c. stays centred over the scale the whole way down.
+          //
+          // The structural guarantee first: the bag transform carries no
+          // horizontal translation at all, and every rotation and scale is
+          // about x = PIVOT_X. The bag physically cannot drift sideways.
+          {
+            let offAxis = 0;
+            for (let t = 0; t <= 1200; t += 40) {
+              // The whole transform must be translate(0 <y>). A literal 0 in
+              // the x slot: there is no horizontal term to get wrong.
+              if (!/^translate\(0 -?[\d.]+\)$/.test(xf(t))) offAxis++;
+            }
+            ok('bag transform has no horizontal term at all', offAxis === 0,
+              `${offAxis} frames off-axis`);
+            // The squash is symmetric about the stage centre, so widening on
+            // impact cannot shift the bag sideways either.
+            ok('impact squash is centred on the stage axis',
+              new RegExp(`^translate\\(${G.VB_W / 2} `).test(
+                (l.__debug.scrub(645), squash.getAttribute('transform'))),
+              squash.getAttribute('transform'));
+          }
+          {
+            const scaleG = q(r, '.swish-loader__scale');
+            const off = (t) => {
+              l.__debug.scrub(t);
+              const bb = bag.getBoundingClientRect();
+              const sc = scaleG.getBoundingClientRect();
+              return bb.width ? (bb.left + bb.width / 2) - (sc.left + sc.width / 2) : 0;
+            };
+            let worst = 0, at = 0;
+            for (let t = 0; t <= 1200; t += 40) {
+              const d = Math.abs(off(t));
+              if (d > worst) { worst = d; at = t; }
+            }
+            // Non-zero only because a tilted bag leans: the silhouette shifts
+            // even though the axis does not. Bounded well under 4% of the
+            // stage, and it has to be exactly zero once level.
+            const sb = svgBox();
+            ok('bag never drifts off centre, at any point', worst < 1,
+              `${worst.toFixed(2)}px at ${at}ms`);
+            ok('bag is exactly centred once settled',
+              Math.abs(off(1200)) < 1 && Math.abs(off(2100)) < 1,
+              `${off(1200).toFixed(2)} / ${off(2100).toFixed(2)} px`);
+          }
+
+          // 7d. the shadow answers to the bag's height
+          {
+            const shadowEl = q(r, 'ellipse');
+            const sh = (t) => {
+              l.__debug.scrub(t);
+              const m = /scale\(([\d.]+)\)/.exec(shadowEl.getAttribute('transform') || '');
+              return { o: op(shadowEl), s: m ? parseFloat(m[1]) : NaN };
+            };
+            const high = sh(60), mid = sh(350), down = sh(600);
+            ok('shadow grows and darkens as the bag descends',
+              high.s < mid.s && mid.s < down.s && high.o < mid.o && mid.o < down.o,
+              `${high.o.toFixed(3)} -> ${mid.o.toFixed(3)} -> ${down.o.toFixed(3)}`);
+            ok('shadow is tightest and darkest at contact',
+              Math.abs(down.s - 1) < 0.001 && Math.abs(down.o - 0.2) < 0.001,
+              `s=${down.s.toFixed(3)} o=${down.o.toFixed(3)}`);
+            // Counter-beat: the bag climbs away on the rebound, so the shadow
+            // must relax - and recover once it is back down.
+            const reb = sh(760), back = sh(900);
+            ok('shadow relaxes while the bag rebounds',
+              reb.o < down.o - 0.005 && reb.s < down.s - 0.005,
+              `${down.o.toFixed(3)} -> ${reb.o.toFixed(3)}`);
+            ok('shadow recovers once the bag is down again',
+              Math.abs(back.o - down.o) < 0.002, back.o.toFixed(3));
+            // Height-driven, not clock-driven: same height => same shadow.
+            const a = sh(1200), b2 = sh(2100);
+            ok('shadow is a function of height, not of time',
+              a.o === b2.o && a.s === b2.s, `${a.o} vs ${b2.o}`);
+          }
+
+          // 8. final resting position: flush on the plate, per the reference
+          {
+            l.__debug.scrub(2100);
+            const sb = svgBox();
+            const bb = bag.getBoundingClientRect();
+            const bottomFrac = (bb.bottom - sb.top) / sb.height;
+            const centreFrac = (bb.left + bb.width / 2 - sb.left) / sb.width;
+            ok('bag rests flush on the plate',
+              Math.abs(bottomFrac - G.BAG_REST_BOTTOM / G.VB_H) < 0.004,
+              bottomFrac.toFixed(4));
+            ok('bag rests centred on the scale', Math.abs(centreFrac - 0.5) < 0.01,
+              centreFrac.toFixed(4));
+          }
+
+          // 9. never sinks into the plate beyond the intended squash.
+          //
+          // Measured against the SCALE, not a fixed line: the plate itself
+          // compresses ~2.8u under the impact and the bag rides it down, so a
+          // fixed reference reads that shared travel as penetration.
+          {
+            const scaleG = q(r, '.swish-loader__scale');
+            const gap = (t) => {
+              l.__debug.scrub(t);
+              const sb2 = svgBox();
+              return ((bag.getBoundingClientRect().bottom -
+                       scaleG.getBoundingClientRect().top) / sb2.height) * 420;
+            };
+            const rest = gap(2100);          // the designed sink, ~30.7u
+            let deepest = 0, at = 0, floated = 0, floatAt = 0;
+            // From contact onward only - before 600ms the bag is supposed to
+            // be in the air, so "floating" is not a defect there.
+            for (let t = 600; t <= 1300; t += 10) {
+              const d = gap(t) - rest;
+              if (d > deepest) { deepest = d; at = t; }
+              if (-d > floated) { floated = -d; floatAt = t; }
+            }
+            ok('bag never sinks into the scale beyond the squash', deepest < 4.5 * G.U,
+              `${deepest.toFixed(2)}u at ${at}ms`);
+            ok('bag never floats off the scale after contact', floated < 16 * G.U,
+              `${floated.toFixed(2)}u at ${floatAt}ms (rebound is ~${(14 * G.U).toFixed(0)}u)`);
+            ok('the designed sink is unchanged', Math.abs(rest - G.SINK) < 1.2,
+              rest.toFixed(2));
+          }
+
+          l.__debug.scrub(900);
+          ok('t=900 display still blank', glyphs.slice(0, 5).every((g) => op(g) === 0));
+
+          /* ---- green scale indicator (initial-state requirement) ---- */
+          {
+            const led = q(r, '.swish-loader__led');
+            ok('scale has a green indicator', !!led &&
+              led.getAttribute('fill').toLowerCase() === '#00c853',
+              led && led.getAttribute('fill'));
+
+            // Lit at every point on the timeline, starting from the very
+            // first frame - never waiting for the bag, never blinking.
+            const samples = [0, 1, 150, 300, 450, 599, 600, 601, 900, 1049,
+                             1051, 1200, 1500, 2100, 2400, 2700];
+            const unlit = samples.filter((t) => { l.__debug.scrub(t); return op(led) < 1; });
+            ok('indicator lit from the first frame and never drops',
+              unlit.length === 0, `unlit at ${unlit.join(',')}ms`);
+
+            // It must belong to the scale, so it inherits the scale's
+            // transform rather than being placed independently.
+            ok('indicator lives inside the scale group',
+              q(r, '.swish-loader__scale').contains(led));
+          /* ---- the indicator: ring -> tick, ONE element ----
+             Five layers in one group. The green arc and the green disc are
+             the same circle, so the tick cannot land anywhere but where the
+             ring was. Nothing is swapped out and nothing disappears. */
+          {
+            const ringG = q(r, '.swish-loader__ring');
+            l.__debug.scrub(600);          // a known loading frame to read from
+            const kids = [...ringG.children];
+            ok('the indicator is one group of five layers',
+              kids.length === 5 && kids[4].tagName.toLowerCase() === 'polyline',
+              kids.map((e) => e.tagName).join(','));
+            const [halo, track, arc, rim, tick] = kids;
+
+            ok('the track is a full light-grey ring',
+              track.getAttribute('fill') === 'none' &&
+              !/^#0/.test(track.getAttribute('stroke')) &&
+              !track.hasAttribute('stroke-dasharray'), track.getAttribute('stroke'));
+            ok('the arc is green, thin and round-ended',
+              arc.getAttribute('stroke') === '#02E44C' &&
+              arc.getAttribute('fill') === 'none' &&
+              arc.getAttribute('stroke-linecap') === 'round' &&
+              parseFloat(arc.getAttribute('stroke-width')) < G.RING_R / 2);
+            ok('the ring centre is empty while it loads',
+              track.getAttribute('fill') === 'none' && arc.getAttribute('fill') === 'none');
+            ok('the ring is centred on the scale, below the body, in the stage',
+              Math.abs(parseFloat(arc.getAttribute('cx')) - G.VB_W / 2) < 0.01 &&
+              G.RING_CY - G.RING_OUTER > 392 && G.RING_CY + G.RING_OUTER < G.VB_H);
+            ok('the halo is a gradient, not a filter',
+              /^url\(/.test(halo.getAttribute('fill')) && !halo.hasAttribute('filter'));
+            ok('the tick is a white round-ended polyline',
+              tick.getAttribute('stroke') === '#FFFFFF' &&
+              tick.getAttribute('fill') === 'none' &&
+              tick.getAttribute('stroke-linecap') === 'round' &&
+              tick.getAttribute('points').trim().split(/\s+/).length === 3);
+            // Identity in the DOM, which is the claim that matters: there is
+            // no second element for the tick to be drawn on.
+            ok('the disc IS the ring - the same element, not a copy',
+              arc === ringG.children[2] && ringG.children.length === 5 &&
+              !ringG.querySelector('.swish-loader__done'));
+
+            const at = (t) => {
+              l.__debug.scrub(t);
+              const da = arc.getAttribute('stroke-dasharray');
+              return {
+                lit: !da || da === 'none' ? null : parseFloat(da.split(' ')[0]),  // null = closed
+                off: parseFloat(arc.getAttribute('stroke-dashoffset')),
+                r: parseFloat(arc.getAttribute('r')),
+                w: parseFloat(arc.getAttribute('stroke-width')),
+                halo: +halo.getAttribute('opacity'),
+                rim: +rim.getAttribute('opacity'),
+                tick: +tick.getAttribute('opacity'),
+                drawn: parseFloat(tick.getAttribute('stroke-dasharray').split(' ')[0]),
+                stroke: arc.getAttribute('stroke'),
+                track: +track.getAttribute('opacity')
+              };
+            };
+            const C = 2 * Math.PI * G.RING_R;
+
+            /* --- phase 1: it loads, and it never leaves --- */
+            const live = [0, 150, 300, 600, 900, 1100, 1200, 1500, 1800, 2000, 2099];
+            ok('the indicator is on screen from the first frame to the last',
+              live.concat([2100, 2400, 2700]).every((t) => {
+                l.__debug.scrub(t);
+                return ringG.getAttribute('opacity') !== '0' &&
+                  ringG.getBoundingClientRect().width > 0;
+              }), 'never hidden');
+            const walk = live.map(at);
+            ok('the tail stays anchored at twelve oclock',
+              walk.every((v) => v.off === 0));
+            ok('the arc only ever grows',
+              walk.every((v, i) => i === 0 || v.lit > walk[i - 1].lit),
+              walk.map((v) => (100 * v.lit / C).toFixed(0) + '%').join(' '));
+            ok('it passes the references two states',
+              Math.abs(walk[0].lit / C - 0.24) < 0.03 &&
+              Math.abs(at(1200).lit / C - 0.57) < 0.04,
+              `t=0 ${(100 * walk[0].lit / C).toFixed(0)}% (ref 24%), settle ${(100 * at(1200).lit / C).toFixed(0)}% (ref 57%)`);
+            ok('the arc never collapses to a dot',
+              walk.every((v) => v.lit >= G.RING_W));
+            ok('the circle closes exactly as SWiSH completes',
+              at(2099).lit / C > 0.999 && at(2100).lit === null,
+              `${(100 * at(2099).lit / C).toFixed(2)}% then closed`);
+            ok('nothing of the tick shows while it is still loading',
+              live.every((t) => { const v = at(t); return v.rim === 0 && v.tick === 0 && v.halo === 0; }));
+
+            /* --- phase 2: the morph --- */
+            const morph = [2100, 2160, 2220, 2280, 2340, 2400, 2520].map(at);
+            // Read as the stroke's two edges, which is what the shape is:
+            // the hole closes, and it only ever closes.
+            const hole = (v) => Math.max(0, v.r - v.w / 2);
+            ok('the hole closes, and only ever closes',
+              morph.every((v, i) => i === 0 || hole(v) <= hole(morph[i - 1]) + 1e-9) &&
+              hole(morph[0]) > 1 && hole(morph[morph.length - 1]) === 0,
+              morph.map((v) => hole(v).toFixed(2)).join(' '));
+            ok('the hole is shut well before the morph ends, leaving no pinhole',
+              hole(at(2320)) === 0, `${hole(at(2320)).toFixed(3)} at 2320ms`);
+            // The outer edge eases from the ring's rim to the disc's, never
+            // outward, never by more than 10%, and never in a step.
+            const edge = (v) => v.r + v.w / 2;
+            ok('the outer edge only ever eases inward, never grows',
+              morph.every((v, i) => i === 0 || edge(v) <= edge(morph[i - 1]) + 1e-9),
+              morph.map((v) => edge(v).toFixed(2)).join(' '));
+            ok('the inset is small enough to read as the same badge',
+              Math.abs(edge(morph[0]) - G.RING_OUTER) < 0.01 &&
+              Math.abs(edge(morph[morph.length - 1]) - G.DONE_R) < 0.01 &&
+              G.DONE_R / G.RING_OUTER > 0.9,
+              `${G.RING_OUTER.toFixed(2)} -> ${G.DONE_R.toFixed(2)} (${(100 * (1 - G.DONE_R / G.RING_OUTER)).toFixed(1)}% in)`);
+            // Sampled 60ms apart; at 60fps a real frame moves a quarter of
+            // this. What is being ruled out is a step, not slow motion.
+            ok('no step: no sampled frame jumps the edge',
+              morph.every((v, i) => i === 0 ||
+                Math.abs(edge(v) - edge(morph[i - 1])) < 0.5 * (G.RING_OUTER - G.DONE_R)),
+              morph.slice(1).map((v, i) => Math.abs(edge(v) - edge(morph[i])).toFixed(3)).join(' '));
+            // The footprint the badge occupies is unchanged: the halo takes
+            // up exactly what the disc gives back.
+            ok('the halo matches the reference ratio and fills the band',
+              Math.abs(G.DONE_HALO_R / G.DONE_R - 1.24) < 0.01 &&
+              G.DONE_HALO_R === G.VB_H - G.RING_CY,
+              `halo/disc ${(G.DONE_HALO_R / G.DONE_R).toFixed(3)}`);
+            // The disc must keep covering the centre at every point.
+            const closedTrack = [2340, 2400, 2520, 2700].map(at);
+            // The fill completes halfway through the morph; from there the
+            // stroke must keep covering the centre, never reopening a hole.
+            const closed = [2340, 2400, 2520, 2700].map(at);
+            ok('the disc stays closed once it has filled',
+              closed.every((v) => Math.abs(v.r - v.w / 2) < 0.01),
+              closed.map((v) => (v.r - v.w / 2).toFixed(3)).join(' '));
+            ok('the tick draws on rather than appearing at once',
+              morph.every((v, i) => i === 0 || v.drawn >= morph[i - 1].drawn) &&
+              morph[0].drawn === 0 && morph[morph.length - 1].drawn > 0,
+              morph.map((v) => v.drawn.toFixed(1)).join(' '));
+            ok('rim and halo fade in, never snap',
+              morph.every((v, i) => i === 0 ||
+                (v.rim >= morph[i - 1].rim && v.halo >= morph[i - 1].halo)));
+            // The disc is closed when the stroke's INNER edge reaches the
+            // centre - not when r reaches 0, which would stop it painting.
+            // Nothing of the loading ring may be left standing around the
+            // finished badge.
+            ok('the grey track is gone by the time the disc has filled',
+              closedTrack.every((v) => v.track === 0) &&
+              at(0).track === 1 && at(2000).track === 1,
+              closedTrack.map((v) => v.track).join(' '));
+            ok('the morph is finished and settled by the hold',
+              at(2700).tick === 1 && at(2700).rim === 1 &&
+              Math.abs(at(2700).r - at(2700).w / 2) < 0.01,
+              `inner edge ${(at(2700).r - at(2700).w / 2).toFixed(3)}`);
+            ok('the disc never stops painting: r stays above zero',
+              morph.concat([at(2700)]).every((v) => v.r > 0.5),
+              `min r ${Math.min(...morph.map((v) => v.r), at(2700).r).toFixed(3)}`);
+            ok('the disc deepens to the reference green',
+              at(2700).stroke === '#01c334', at(2700).stroke);
+
+            /* --- it is ONE element: size and centre hold across the morph --- */
+            {
+              // Across the WHOLE life of the indicator, loading and morph
+              // alike, the outer edge and the centre are fixed.
+              const span = [];
+              for (let t = 0; t <= 2700; t += 30) span.push(at(t));
+              ok('the indicator keeps its size from ring to tick',
+                span.every((v) => {
+                  const e = v.r + v.w / 2;
+                  return e <= G.RING_OUTER + 0.01 && e >= G.DONE_R - 0.01;
+                }),
+                `edge ${Math.min(...span.map((v) => v.r + v.w / 2)).toFixed(3)}..${Math.max(...span.map((v) => v.r + v.w / 2)).toFixed(3)} within ${G.DONE_R.toFixed(2)}..${G.RING_OUTER.toFixed(2)}`);
+              const cx0 = arc.getAttribute('cx'), cy0 = arc.getAttribute('cy');
+              ok('the indicator never moves',
+                [0, 600, 1200, 2100, 2400, 2700].every((t) => {
+                  l.__debug.scrub(t);
+                  return arc.getAttribute('cx') === cx0 && arc.getAttribute('cy') === cy0;
+                }), `${cx0},${cy0}`);
+              l.__debug.scrub(2250);
+              const mid = ringG.getBoundingClientRect();
+              ok('it stays circular mid-morph',
+                Math.abs(mid.width - mid.height) / mid.width < 0.03,
+                `${mid.width.toFixed(2)} x ${mid.height.toFixed(2)}`);
+            }
+
+            /* --- exception paths --- */
+            {
+              const svgB = q(r, 'svg').getBoundingClientRect();
+              const bad = [];
+              for (let t = 0; t <= 2700; t += 25) {
+                l.__debug.scrub(t);
+                const bb = ringG.getBoundingClientRect();
+                if (bb.bottom > svgB.bottom + 0.5 || bb.top < svgB.top - 0.5 ||
+                    bb.left < svgB.left - 0.5 || bb.right > svgB.right + 0.5) bad.push(t);
+              }
+              ok('never clipped by the stage, halo included', bad.length === 0,
+                bad.length ? `clipped at ${bad.slice(0, 5).join(',')}ms` : 'inside at every frame');
+              ok('the halo cannot reach the edge visibly',
+                G.DONE_HALO_R <= G.VB_H - G.RING_CY,
+                `${G.DONE_HALO_R.toFixed(2)} of ${(G.VB_H - G.RING_CY).toFixed(2)}`);
+            }
+            {
+              l.__debug.scrub(2400);
+              const wRest = ringG.getBoundingClientRect().width;
+              l.__debug.scrub(620);
+              ok('it does not squash with the plate',
+                Math.abs(ringG.getBoundingClientRect().width - wRest) < 0.01);
+            }
+            {
+              const d = await make({ loop: true });
+              d.__debug.setDegraded();
+              const dg = q(d.root, '.swish-loader__ring');
+              d.__debug.scrub(300);
+              const a1 = parseFloat(dg.children[2].getAttribute('stroke-dasharray').split(' ')[0]);
+              d.__debug.scrub(900);
+              const a2 = parseFloat(dg.children[2].getAttribute('stroke-dasharray').split(' ')[0]);
+              d.__debug.scrub(2700);
+              ok('it survives degraded mode and still completes',
+                a2 > a1 && +dg.children[4].getAttribute('opacity') === 1 &&
+                ![...dg.querySelectorAll('*')].some((e) => e.hasAttribute('filter')),
+                `${a1.toFixed(1)} -> ${a2.toFixed(1)}`);
+              d.destroy();
+            }
+            {
+              const rm = await make({ loop: false, reducedMotion: true });
+              const rg = q(rm.root, '.swish-loader__ring');
+              const ra = rg.children[2];
+              ok('the reduced-motion still shows the completed tick',
+                +rg.children[4].getAttribute('opacity') === 1 &&
+                Math.abs(parseFloat(ra.getAttribute('r')) -
+                  parseFloat(ra.getAttribute('stroke-width')) / 2) < 0.01,
+                `tick ${rg.children[4].getAttribute('opacity')}, r ${ra.getAttribute('r')}`);
+              rm.destroy();
+            }
+            const z1 = at(2200), z2 = at(2400), z3 = at(2200);
+            ok('the indicator is a pure function of t',
+              z1.drawn === z3.drawn && z1.r === z3.r && z1.drawn !== z2.drawn);
+            // Arriving at a loading frame FROM the finished tick must give
+            // the same thing as arriving at it from the start.
+            at(0); const fwd = at(600);
+            at(2700); const back = at(600);
+            ok('scrubbing back from the tick restores the ring exactly',
+              JSON.stringify(fwd) === JSON.stringify(back),
+              `${JSON.stringify(back)}`);
+          }
+
+          /* ---- the display panel: WIDER, and only wider ----
+             A live pill drawn over the one baked into the scale raster. It
+             must cover the baked box completely, or its edges show through,
+             and it must match it exactly in height and vertical position. */
+          {
+            const glass = q(r, '.swish-loader__glass');
+            const K = G.SCALE_DRAW_W / 273;
+            const SX = (G.VB_W - G.SCALE_DRAW_W) / 2;
+            const baked = { x0: SX + 49 * K, x1: SX + 221 * K,
+                            y0: G.PLATE_TOP_Y + 36 * K, y1: G.PLATE_TOP_Y + 64 * K };
+            const gx0 = parseFloat(glass.getAttribute('x'));
+            const gy0 = parseFloat(glass.getAttribute('y'));
+            const gw = parseFloat(glass.getAttribute('width'));
+            const gh = parseFloat(glass.getAttribute('height'));
+            const gx1 = gx0 + gw, gy1 = gy0 + gh;
+
+            ok('the panel hides the one baked into the scale',
+              gx0 <= baked.x0 && gx1 >= baked.x1 &&
+              gy0 <= baked.y0 + 0.001 && gy1 >= baked.y1 - 0.001,
+              `${gx0.toFixed(1)}..${gx1.toFixed(1)} covers ${baked.x0.toFixed(1)}..${baked.x1.toFixed(1)}`);
+
+            // HEIGHT AND VERTICAL POSITION ARE UNTOUCHED.
+            ok('the panel height is exactly the baked height',
+              Math.abs(gh - (baked.y1 - baked.y0)) < 1e-9,
+              `${gh.toFixed(6)} vs ${(baked.y1 - baked.y0).toFixed(6)}`);
+            ok('the panel top edge is exactly the baked top edge',
+              Math.abs(gy0 - baked.y0) < 1e-9, `${gy0.toFixed(6)}`);
+
+            // The widening is real, and deliberately small.
+            const grew = gw / (baked.x1 - baked.x0);
+            ok('the panel is wider than the baked one',
+              grew > 1.05, `+${(100 * (grew - 1)).toFixed(1)}%`);
+            ok('the widening stays subtle', grew < 1.25,
+              `+${(100 * (grew - 1)).toFixed(1)}% (cap +25%)`);
+
+            // Centred where the baked one was, so the readout cannot shift.
+            ok('the panel grows symmetrically about the readout',
+              Math.abs((gx0 + gx1) / 2 - G.GLASS_CX) < 0.01 &&
+              Math.abs((gx0 + gx1) / 2 - (baked.x0 + baked.x1) / 2) < 0.5,
+              `centre ${((gx0 + gx1) / 2).toFixed(2)} vs ${G.GLASS_CX.toFixed(2)}`);
+
+            // It can never reach the edge of the scale body.
+            ok('the panel stays well inside the scale body',
+              gx0 > SX + 20 * K && gx1 < SX + 252 * K,
+              `${((gx0 - SX) / K).toFixed(0)} raster rows of bezel each side`);
+            ok('rounded corners are kept',
+              parseFloat(glass.getAttribute('rx')) > 0);
+            ok('the panel is drawn under the readout',
+              glass === q(r, '.swish-loader__display').firstElementChild);
+
+            // The readout still fits, at every step, with room to spare.
+            const pads = [];
+            for (const t of [1200, 1300, 1500, 1700, 1900, 2100, 2400]) {
+              l.__debug.scrub(t);
+              const gb = glass.getBoundingClientRect();
+              const lit = [...r.querySelectorAll('text.swish-loader__glyph')]
+                .filter((e) => parseFloat(e.getAttribute('opacity') || '0') > 0.5)
+                .map((e) => e.getBoundingClientRect());
+              if (!lit.length) continue;
+              pads.push(+Math.min(
+                Math.min(...lit.map((b) => b.left)) - gb.left,
+                gb.right - Math.max(...lit.map((b) => b.right)),
+                Math.min(...lit.map((b) => b.top)) - gb.top,
+                gb.bottom - Math.max(...lit.map((b) => b.bottom))
+              ).toFixed(2));
+            }
+            ok('the readout fits inside the panel at every step',
+              pads.every((p) => p > 0.5), `tightest ${Math.min(...pads)}px`);
+
+            // Lives in the scale group, so impact squashes it too.
+            l.__debug.scrub(2400);
+            const rest = glass.getBoundingClientRect().top;
+            l.__debug.scrub(620);
+            ok('the panel compresses with the scale at impact',
+              Math.abs(glass.getBoundingClientRect().top - rest) > 0.2);
+          }
+
+            ok('indicator sits on the display glass',
+              Math.abs(parseFloat(led.getAttribute('cx')) - G.LED_X) < 0.5 &&
+              Math.abs(parseFloat(led.getAttribute('cy')) - G.LED_Y) < 0.5,
+              `${led.getAttribute('cx')},${led.getAttribute('cy')}`);
+
+            // It must never be mistaken for part of the readout.
+            {
+              const hits = [];
+              for (const t of [1250, 1300, 1450, 1530, 1700, 1800, 1950, 2100, 2500]) {
+                l.__debug.scrub(t);
+                const lb = led.getBoundingClientRect();
+                for (const g of glyphs) {
+                  if (op(g) < 0.05) continue;
+                  const gb = g.getBoundingClientRect();
+                  if (lb.right > gb.left - 1 && lb.left < gb.right + 1) { hits.push(t); break; }
+                }
+              }
+              ok('indicator never collides with the readout',
+                hits.length === 0, `overlaps at ${hits.join(',')}ms`);
+            }
+
+            // Moves with the scale: it is compressed along with the plate.
+            l.__debug.scrub(645);
+            const squashed = led.getBoundingClientRect();
+            l.__debug.scrub(300);
+            const resting = led.getBoundingClientRect();
+            ok('indicator moves with the scale under impact',
+              Math.abs(squashed.top - resting.top) > 0.2,
+              `${resting.top.toFixed(2)} -> ${squashed.top.toFixed(2)}`);
+          }
+
+          /* ---- the lettering is flat ----
+             No blur, halo, offset duplicate, stroke or bevel - on the
+             glyphs themselves or on anything they hang beneath, since an
+             SVG filter applies to a whole subtree. Checked against the
+             COMPUTED style, so it catches a stylesheet reintroducing one
+             as well as an attribute. The LED is exempt: its halo is the
+             one filter the display is meant to have. */
+          {
+            l.__debug.scrub(2100);
+            const disp = q(l.root, '.swish-loader__display');
+            for (let node = disp; node && node !== l.root; node = node.parentNode) {
+              ok(`no filter above the readout (<${node.tagName}>)`,
+                !node.hasAttribute('filter') &&
+                  getComputedStyle(node).filter === 'none',
+                node.getAttribute('filter') || getComputedStyle(node).filter);
+            }
+            const flat = glyphs.every((g) => {
+              const cs = getComputedStyle(g);
+              return !g.hasAttribute('filter') && cs.filter === 'none' &&
+                (cs.textShadow === 'none' || cs.textShadow === '') &&
+                (cs.stroke === 'none' || cs.stroke === '');
+            });
+            ok('every glyph is flat: no filter, shadow or stroke', flat);
+            ok('glyphs are bold', getComputedStyle(glyphs[0]).fontWeight === '700',
+              getComputedStyle(glyphs[0]).fontWeight);
+            // A lit letter is fully opaque: no see-through, no soft edge
+            // coming from alpha rather than from the outline.
+            ok('a lit letter is fully opaque', op(glyphs[0]) === 1, op(glyphs[0]));
+            // The LED keeps its own halo, and it is the ONLY filtered node.
+            const ledFx = q(l.root, '.swish-loader__led');
+            ok('the standby LED keeps its halo',
+              /^url\(/.test(ledFx.getAttribute('filter') || ''),
+              ledFx.getAttribute('filter'));
+          }
+
+          const shown = (t) => {
+            l.__debug.scrub(t);
+            return glyphs.slice(0, 5).filter((g) => op(g) > 0.5).length;
+          };
+          ok('t=1300 shows "S"', shown(1300) === 1, shown(1300));
+          ok('t=1530 shows "SW"', shown(1530) === 2, shown(1530));
+          ok('t=1760 shows "SWi"', shown(1760) === 3, shown(1760));
+          ok('t=2100 shows "SWiSH"', shown(2100) === 5, shown(2100));
+
+          /* ---- fixed five-cell readout ----
+             Cells 0..4 are the letters, 5..9 the placeholder dot that waits
+             in each. Reading whichever of the pair is lit gives the literal
+             display, which is what the sequence is actually specified in. */
+          const readout = (t) => {
+            l.__debug.scrub(t);
+            let s = '';
+            for (let i = 0; i < 5; i++) {
+              const lit = op(glyphs[i]), dot = op(glyphs[i + 5]);
+              s += lit > 0.5 ? glyphs[i].textContent : dot > 0.5 ? '.' : ' ';
+            }
+            return s;
+          };
+          const WANT = [
+            [1200, '.....'], [1300, 'S....'], [1500, 'SW...'],
+            [1700, 'SWi..'], [1900, 'SWiS.'], [2100, 'SWiSH']
+          ];
+          for (const [t, want] of WANT) {
+            ok(`t=${t} reads "${want}"`, readout(t) === want, `"${readout(t)}"`);
+          }
+          ok('display is blank before the count', readout(1000) === '     ',
+            `"${readout(1000)}"`);
+
+          // Each cell's dot and letter must sit on the SAME spot - that is
+          // what makes a letter replace its dot rather than land beside it.
+          {
+            const xy = (e) => (e.parentNode.getAttribute('transform')
+              .match(/-?[\d.]+/g) || []).map(Number);
+            const off = [];
+            for (let i = 0; i < 5; i++) {
+              const a = xy(glyphs[i]), b = xy(glyphs[i + 5]);
+              if (Math.abs(a[0] - b[0]) > 0.005) off.push(i + 1);
+            }
+            ok('every letter sits exactly on its dot',
+              off.length === 0, `cells ${off.join(',')} differ`);
+          }
+
+          // A dot may only leave when its own letter arrives.
+          {
+            const bad = [];
+            for (const t of [1200, 1300, 1500, 1700, 1900, 2100]) {
+              l.__debug.scrub(t);
+              for (let i = 0; i < 5; i++) {
+                if (op(glyphs[i]) + op(glyphs[i + 5]) < 0.98) bad.push(`${t}ms cell${i + 1}`);
+              }
+            }
+            ok('each cell always holds exactly one mark',
+              bad.length === 0, bad.join(' '));
+          }
+
+          // squash must lead the rebound
+          const bottom = (t) => { l.__debug.scrub(t); return bag.getBoundingClientRect().bottom; };
+          const rest = bottom(600), squashed = bottom(645), rebound = bottom(760);
+          ok('bag compresses INTO the plate at impact', squashed > rest + 0.5,
+            `${rest.toFixed(1)} -> ${squashed.toFixed(1)}`);
+          ok('bag rebounds above rest after compressing', rebound < rest - 2,
+            `${rest.toFixed(1)} -> ${rebound.toFixed(1)}`);
+          const wide = (t) => { l.__debug.scrub(t); return bag.getBoundingClientRect().width; };
+          ok('bag squashes wider than it rests', wide(645) > wide(600) + 0.5,
+            `${wide(600).toFixed(1)} -> ${wide(645).toFixed(1)}`);
+
+          /* ---- motion streaks ---- */
+          const streaks = q(r, '.swish-loader__streaks');
+          const sOp = (t) => { l.__debug.scrub(t); return op(streaks); };
+
+          ok('exactly 2 streak lines, never duplicated',
+            streaks.querySelectorAll('line').length === 2,
+            streaks.querySelectorAll('line').length);
+
+          // One off each upper corner, and nowhere near the handles (x 193-220).
+          {
+            const xs = [...streaks.querySelectorAll('line')]
+              .map((ln) => parseFloat(ln.getAttribute('x1'))).sort((a, b) => a - b);
+            ok('one line left of centre, one right', xs[0] < 200 && xs[1] > 200, xs.join(','));
+            // Handles occupy x 193..220 in the reference composition.
+            const hL = G.VB_W / 2 + (193 - 200) * G.U - 8;
+            const hR = G.VB_W / 2 + (220 - 200) * G.U + 8;
+            ok('neither line sits on the handles',
+              xs.every((x) => x < hL || x > hR),
+              `${xs.join(',')} vs handles ${hL.toFixed(0)}..${hR.toFixed(0)}`);
+          }
+
+          // Thin, and faded rather than solid bars.
+          {
+            const lines = [...streaks.querySelectorAll('line')];
+            ok('lines are very thin',
+              lines.every((ln) => parseFloat(ln.getAttribute('stroke-width')) <= 2),
+              lines.map((ln) => ln.getAttribute('stroke-width')).join(','));
+            ok('lines are gradient-faded, not flat strokes',
+              lines.every((ln) => /url\(#.*streak/.test(ln.getAttribute('stroke'))));
+            ok('the two lines are not identical (irregular)',
+              lines[0].getAttribute('y1') !== lines[1].getAttribute('y1') ||
+              lines[0].getAttribute('stroke-width') !== lines[1].getAttribute('stroke-width'));
+          }
+
+          // Tops reach above the bag's own top edge (BAG_Y = 51).
+          ok('lines extend above the top of the bag',
+            [...streaks.querySelectorAll('line')]
+              .every((ln) => parseFloat(ln.getAttribute('y1')) < G.BAG_Y),
+            [...streaks.querySelectorAll('line')].map((ln) => ln.getAttribute('y1')).join(','));
+
+          ok('no streaks before the fall starts', sOp(0) === 0);
+          ok('streaks are present through the whole fall',
+            sOp(120) > 0 && sOp(300) > 0 && sOp(450) > 0 && sOp(560) > 0,
+            [120, 300, 450, 560].map((t) => sOp(t).toFixed(2)).join(' '));
+          ok('streaks build with the acceleration', sOp(360) > sOp(120),
+            `${sOp(120).toFixed(3)} -> ${sOp(360).toFixed(3)}`);
+          ok('streaks stay subtle', sOp(500) <= 0.55, sOp(500).toFixed(3));
+          ok('streaks gone the moment the bag lands', sOp(600) === 0);
+          ok('no streaks during impact', sOp(645) === 0 && sOp(760) === 0);
+          ok('no streaks after landing', sOp(1200) === 0 && sOp(2100) === 0);
+
+          // Flicker guard: sample every frame across the whole drop and
+          // require the opacity curve to be continuous.
+          {
+            let maxJump = 0, prev = sOp(0), at = 0;
+            for (let t = 16; t <= 620; t += 16) {
+              const cur = sOp(t);
+              if (Math.abs(cur - prev) > maxJump) { maxJump = Math.abs(cur - prev); at = t; }
+              prev = cur;
+            }
+            ok('streak opacity never jumps (no flicker)', maxJump < 0.12,
+              `max ${maxJump.toFixed(3)} at ${at}ms`);
+          }
+
+          // Readable from the first frames: the lower tail must actually be
+          // inside the stage, not merely non-zero in opacity.
+          {
+            l.__debug.scrub(150);
+            const sb = svgBox();
+            const onScreen = [...streaks.querySelectorAll('line')].filter((ln) => {
+              const b = ln.getBoundingClientRect();
+              return b.bottom > sb.top + 1 && b.top < sb.bottom - 1;
+            });
+            ok('streaks are on screen early in the fall', onScreen.length === 2,
+              `${onScreen.length}/2`);
+          }
+
+          /* ---- impact marks (grey, at contact only) ---- */
+          {
+            const impact = q(r, '.swish-loader__impact');
+            const marks = [...impact.children];
+            const strokes = marks.map((g) => g.querySelector('line'));
+
+            ok('exactly 4 impact marks', marks.length === 4, marks.length);
+            ok('no green impact marks anywhere',
+              strokes.every((ln) => !/00C853|3DFF8A/i.test(ln.getAttribute('stroke'))),
+              strokes.map((ln) => ln.getAttribute('stroke')).join(','));
+            ok('impact marks are dark grey',
+              strokes.every((ln) => /^#3a3a3a$/i.test(ln.getAttribute('stroke'))));
+            ok('impact marks have rounded ends',
+              strokes.every((ln) => ln.getAttribute('stroke-linecap') === 'round'));
+
+            // two a side, mirror-symmetric about the stage axis
+            {
+              const cx = strokes.map(
+                (ln) => (parseFloat(ln.getAttribute('x1')) + parseFloat(ln.getAttribute('x2'))) / 2);
+              const left = cx.filter((x) => x < G.VB_W / 2).sort((a, b) => a - b);
+              const right = cx.filter((x) => x > G.VB_W / 2).sort((a, b) => b - a);
+              ok('two marks on each side', left.length === 2 && right.length === 2,
+                `${left.length}/${right.length}`);
+              ok('placement is mirror-symmetric',
+                left.every((x, i) => Math.abs((G.VB_W - x) - right[i]) < 0.6),
+                left.map((x, i) => ((G.VB_W - x) - right[i]).toFixed(2)).join(','));
+            }
+
+            // one diagonal and one near-flat per side
+            {
+              // Inclination of the LINE, not its direction: the right-hand
+              // marks are drawn outer-to-inner, so a raw atan2 reports 135/175
+              // for what are visually 45 and 5 degree strokes.
+              const ang = strokes.map((ln) => {
+                const dx = parseFloat(ln.getAttribute('x2')) - parseFloat(ln.getAttribute('x1'));
+                const dy = parseFloat(ln.getAttribute('y2')) - parseFloat(ln.getAttribute('y1'));
+                const a = Math.abs((Math.atan2(dy, dx) * 180) / Math.PI);
+                return a > 90 ? 180 - a : a;
+              });
+              const steep = ang.filter((a) => a > 30 && a < 60).length;
+              const flat = ang.filter((a) => a < 15).length;
+              ok('two diagonals and two near-horizontals', steep === 2 && flat === 2,
+                ang.map((a) => a.toFixed(0)).join(','));
+            }
+
+            const vis = (t) => {
+              l.__debug.scrub(t);
+              return marks.reduce((m, g) => Math.max(m, op(g)), 0);
+            };
+
+            ok('no marks before the bag reaches the scale',
+              [0, 200, 400, 560, 595].every((t) => vis(t) === 0),
+              [0, 200, 400, 560, 595].map(vis).join(','));
+            ok('marks appear at impact', vis(700) > 0.3 && vis(780) > 0.3,
+              `${vis(700).toFixed(2)} / ${vis(780).toFixed(2)}`);
+            ok('marks are gone once the bag has settled',
+              [950, 1100, 1200, 1600, 2100, 2700].every((t) => vis(t) === 0),
+              [950, 1100, 1200, 1600, 2100, 2700].map(vis).join(','));
+
+            // Tied to the bag, not to the stage.
+            ok('impact group carries the bag\'s own transform',
+              (l.__debug.scrub(780), impact.getAttribute('transform')) ===
+                bag.getAttribute('transform'),
+              impact.getAttribute('transform'));
+
+            // Painted before the bag, so they can never cross it.
+            {
+              const kids = [...q(r, 'svg').children];
+              ok('impact marks paint behind the bag',
+                kids.indexOf(impact) < kids.indexOf(bag));
+            }
+
+            // Clear of both the bag and the scale while visible.
+            {
+              const scaleG = q(r, '.swish-loader__scale');
+              let onBag = 0, onScale = 0;
+              for (let t = 610; t <= 925; t += 15) {
+                l.__debug.scrub(t);
+                const bb = bag.getBoundingClientRect();
+                const sb = scaleG.getBoundingClientRect();
+                for (const g of marks) {
+                  if (op(g) < 0.02) continue;
+                  const m = g.getBoundingClientRect();
+                  if (m.right > bb.left + 0.5 && m.left < bb.right - 0.5) onBag++;
+                  if (m.bottom > sb.top + 0.5) onScale++;
+                }
+              }
+              ok('marks never overlap the bag', onBag === 0, `${onBag} overlaps`);
+              ok('marks never overlap the scale', onScale === 0, `${onScale} overlaps`);
+            }
+
+            // Geometry is viewBox units, so it is identical at any size.
+            {
+              l.root.style.setProperty('--swish-size', '160px');
+              l.__debug.scrub(780);
+              const a = strokes.map((ln) => ln.getAttribute('x1') + ',' + ln.getAttribute('y1')).join('|');
+              l.root.style.setProperty('--swish-size', '520px');
+              l.__debug.scrub(780);
+              const b2 = strokes.map((ln) => ln.getAttribute('x1') + ',' + ln.getAttribute('y1')).join('|');
+              ok('mark geometry is resolution-independent', a === b2);
+              l.root.style.removeProperty('--swish-size');
+            }
+          }
+
+          // A replayed loop must not start with lines left on screen.
+          { l.__debug.scrub(2100); l.__debug.scrub(0);
+            ok('no streaks left over when the loop restarts', op(streaks) === 0); }
+
+          // Painted before the bag, so the bag always covers them.
+          {
+            const kids = [...q(r, 'svg').children];
+            ok('streaks paint behind the bag',
+              kids.indexOf(streaks) < kids.indexOf(bag));
+          }
+
+          // Anchored to the bag's live position, not to anything fixed.
+          {
+            l.__debug.scrub(450);
+            ok('streaks share the bag\'s exact vertical transform',
+              streaks.getAttribute('transform') === bag.getAttribute('transform'),
+              streaks.getAttribute('transform'));
+            ok('and that transform is itself translateY-only',
+              /^translate\(0 -?[\d.]+\)$/.test(streaks.getAttribute('transform')));
+          }
+
+          // Never off the sides of the stage.
+          {
+            l.__debug.scrub(450);
+            const sb = svgBox();
+            const bad = [...streaks.querySelectorAll('line')].filter((ln) => {
+              const b = ln.getBoundingClientRect();
+              return b.left < sb.left - 0.5 || b.right > sb.right + 0.5;
+            });
+            ok('streaks never clip the sides', bad.length === 0, `${bad.length} outside`);
+          }
+
+          // Same geometry at every stage size: all of it is viewBox units.
+          {
+            l.root.style.setProperty('--swish-size', '160px');
+            l.__debug.scrub(450);
+            const small = streaks.getAttribute('transform');
+            const smallD = streaks.querySelector('line').getAttribute('y2');
+            l.root.style.setProperty('--swish-size', '520px');
+            l.__debug.scrub(450);
+            ok('streak geometry is resolution-independent',
+              streaks.getAttribute('transform') === small &&
+              streaks.querySelector('line').getAttribute('y2') === smallD);
+            l.root.style.removeProperty('--swish-size');
+          }
+
+          // letters must not shift once revealed
+          l.__debug.scrub(1400);
+          const sAt1400 = glyphs[0].parentNode.getAttribute('transform');
+          l.__debug.scrub(2100);
+          ok('revealed glyphs never move',
+            glyphs[0].parentNode.getAttribute('transform') === sAt1400);
+
+          l.destroy();
+        }
+
+        /* ---------- 3. reduced motion ---------- */
+        {
+          const l = await make({ reducedMotion: true });
+          const glyphs = [...q(l.root, 'svg').querySelectorAll('text')];
+          ok('reduced motion renders the final state',
+            glyphs.slice(0, 5).every((g) => op(g) > 0.9));
+          ok('reduced motion runs no rAF loop',
+            !l.root.classList.contains('is-animating'));
+          ok('reduced motion marks the static class',
+            l.root.classList.contains('is-static'));
+          l.destroy();
+        }
+
+        /* ---------- 4. degraded mode ---------- */
+        {
+          const l = await make({ loop: true });
+          l.__debug.setDegraded();
+          l.__debug.scrub(700);
+          ok('degraded leaves no filter on the readout',
+            !q(l.root, '.swish-loader__display').hasAttribute('filter'));
+          ok('degraded keeps the bag moving',
+            /^translate\(0 -?[\d.]+\)$/.test(
+              q(l.root, '.swish-loader__bag').getAttribute('transform')),
+            q(l.root, '.swish-loader__bag').getAttribute('transform'));
+          l.__debug.scrub(450);
+          ok('degraded keeps the motion streaks (they are nearly free)',
+            op(q(l.root, '.swish-loader__streaks')) > 0);
+          l.__debug.scrub(650);
+          ok('degraded sheds the impact marks',
+            [...q(l.root, '.swish-loader__impact').children].every((g) => op(g) === 0));
+          l.destroy();
+        }
+
+        /* ---------- 5. lifecycle & cleanup ---------- */
+        {
+          const l = await make({ loop: false, minDuration: 0 });
+          const before = host.childElementCount;
+          l.destroy();
+          ok('destroy removes the DOM', host.childElementCount === before - 1);
+          ok('destroy is idempotent', (() => { try { l.destroy(); return true; } catch { return false; } })());
+        }
+        {
+          let completed = false;
+          const l = await make({ loop: true, minDuration: 0, onComplete: () => { completed = true; } });
+          l.finish();
+          await settle(700);
+          ok('finish() fires onComplete after the exit fade', completed);
+          ok('finish() marks completion', l.isDone());
+          l.destroy();
+        }
+        {
+          // minDuration must prevent a flash
+          const t0 = performance.now();
+          let at = 0;
+          const l = await make({ loop: true, minDuration: 900, onComplete: () => { at = performance.now() - t0; } });
+          l.finish();
+          await settle(1600);
+          ok('minDuration prevents a flash', at >= 850, `${at.toFixed(0)}ms`);
+          l.destroy();
+        }
+        {
+          let calls = 0;
+          const l = await make({ loop: true, minDuration: 0, onComplete: () => { calls++; } });
+          l.finish(); l.finish(); l.finish();
+          await settle(700);
+          ok('repeated finish() calls complete exactly once', l.isDone() && calls === 1,
+            `isDone=${l.isDone()} calls=${calls}`);
+          l.destroy();
+        }
+        {
+          // destroy() mid-wait must not fire a callback into a dead loader
+          let fired = false;
+          const l = await make({ loop: true, minDuration: 900, onComplete: () => { fired = true; } });
+          l.finish();
+          l.destroy();
+          await settle(1400);
+          ok('destroy() during minDuration cancels the pending finish', !fired);
+        }
+        {
+          let threw = false;
+          try { createSwishLoader({}); } catch { threw = true; }
+          ok('missing mount throws a clear error', threw);
+        }
+        {
+          // a throwing onComplete must not wedge the loader
+          const l = await make({ loop: true, minDuration: 0, onComplete: () => { throw new Error('boom'); } });
+          l.finish();
+          await settle(600);
+          ok('a throwing onComplete is contained', l.isDone());
+          l.destroy();
+        }
+
+        /* ---------- 6. responsiveness ---------- */
+        {
+          const l = await make({ loop: true });
+          const svg = q(l.root, 'svg');
+          ok('viewBox present', svg.getAttribute('viewBox') === '0 0 400 420');
+          ok('no hard-coded pixel width/height on the svg',
+            !svg.hasAttribute('width') && !svg.hasAttribute('height'));
+          for (const px of [140, 320, 900]) {
+            l.root.style.setProperty('--swish-size', px + 'px');
+            const r = q(l.root, '.swish-loader__stage').getBoundingClientRect();
+            ok(`stage keeps 400:420 aspect at ${px}px`,
+              Math.abs(r.width / r.height - 400 / 420) < 0.02,
+              (r.width / r.height).toFixed(4));
+          }
+          l.destroy();
+        }
+
+        /* ---------- report ---------- */
+        const failed = results.filter((r) => !r.pass);
+        document.getElementById('out').innerHTML =
+          results
+            .map((r) => `<span class="${r.pass ? 'pass' : 'fail'}">${r.pass ? 'PASS' : 'FAIL'}</span>  ${r.name}${r.detail && !r.pass ? '   [' + r.detail + ']' : ''}`)
+            .join('\n') +
+          `\n\nRESULT ${results.length - failed.length}/${results.length} passed`;
+        document.title = failed.length ? `FAIL ${failed.length}` : 'ALL PASS';
+      }
+
+      run().catch((e) => {
+        document.getElementById('out').textContent = 'HARNESS ERROR: ' + (e && e.stack || e);
+        document.title = 'HARNESS ERROR';
+      });
+    </script>
+  </body>
+</html>
