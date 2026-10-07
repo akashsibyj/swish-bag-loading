@@ -399,15 +399,16 @@
              transform of the loading ring, not a replacement for it. */
           {
             const ringG = q(r, '.swish-loader__ring');
-            l.__debug.scrub(600);            // a known loading frame
+            l.__debug.scrub(1500);           // a known weighing frame
             const kids = [...ringG.children];
-            ok('the indicator is one group of four layers',
+            // Rays FIRST, so the disc paints over them.
+            ok('the indicator is one group of four layers, rays underneath',
               kids.length === 4 &&
-              kids[0].tagName.toLowerCase() === 'circle' &&
-              kids[2].tagName.toLowerCase() === 'polyline' &&
-              kids[3].tagName.toLowerCase() === 'g',
+              kids[0].tagName.toLowerCase() === 'g' &&
+              kids[1].classList.contains('swish-loader__status-disc') &&
+              kids[3].tagName.toLowerCase() === 'polyline',
               kids.map((e) => e.tagName).join(','));
-            const [disc, track, arc, sparkG] = kids;
+            const [sparkG, disc, track, arc] = kids;
 
             ok('the pale disc is behind everything, in all states',
               disc.getAttribute('fill') === '#EDFCF3' &&
@@ -463,10 +464,37 @@
               };
             };
 
-            /* --- phase 1: Processing -> Weighing, in step with the bag --- */
-            const live = [0, 150, 300, 600, 900, 1100, 1199];
+            /* --- it does not exist until the bag is down and still --- */
+            {
+              const early = [];
+              for (let t = 0; t < TIMELINE.SETTLE_END; t += 25) {
+                l.__debug.scrub(t);
+                if (+ringG.getAttribute('opacity') !== 0) early.push(t);
+              }
+              ok('nothing of the indicator is drawn while the bag is falling',
+                early.length === 0,
+                early.length ? `showing at ${early.slice(0, 5).join(',')}ms` : 'absent to the settle');
+              l.__debug.scrub(TIMELINE.SETTLE_END + 200);
+              ok('it is there once the bag has settled',
+                +ringG.getAttribute('opacity') === 1);
+              // A fade, not a pop: no single 25ms step may do most of it.
+              const steps = [];
+              let prev = 0;
+              for (let t = TIMELINE.SETTLE_END; t <= TIMELINE.SETTLE_END + 220; t += 25) {
+                l.__debug.scrub(t);
+                const o = +ringG.getAttribute('opacity');
+                steps.push(o - prev);
+                prev = o;
+              }
+              ok('it fades in rather than popping', Math.max(...steps) < 0.35,
+                `biggest step ${Math.max(...steps).toFixed(2)}`);
+            }
+
+            /* --- phase 1: Processing -> Weighing --- */
+            const live = [1200, 1350, 1500, 1650, 1800, 1950, 2099];
             ok('the arc is one polyline of a fixed point count',
-              live.every((t) => at(t).n === at(0).n) && at(0).n > 40, at(0).n);
+              live.every((t) => at(t).n === at(live[0]).n) && at(live[0]).n > 40,
+              at(live[0]).n);
             ok('every point is on the ring while it loads',
               live.every((t) => at(t).onCircle),
               `worst deviation ${Math.max(...live.map((t) => at(t).dev)).toFixed(4)}`);
@@ -476,14 +504,14 @@
               sweeps.map((v) => (100 * v).toFixed(0) + '%').join(' '));
 
             // Measured off the reference: 28% Processing, 65% Weighing.
-            ok('it starts on the reference Processing sweep',
-              Math.abs(at(0).sweep - 0.28) < 0.02,
-              `${(100 * at(0).sweep).toFixed(0)}% (ref 28%)`);
-            // T_SETTLE_END is the instant the bag stops moving: that is what
-            // "synchronised with the bag" has to mean, not a nearby number.
-            ok('it reaches the reference Weighing sweep as the bag settles',
-              Math.abs(at(TIMELINE.SETTLE_END).sweep - 0.65) < 0.02,
-              `${(100 * at(TIMELINE.SETTLE_END).sweep).toFixed(0)}% at ${TIMELINE.SETTLE_END}ms (ref 65%)`);
+            // T_SETTLE_END is the instant the bag stops moving, so that is
+            // where the indicator starts - not a nearby number.
+            ok('it arrives on the reference Processing sweep',
+              Math.abs(at(TIMELINE.SETTLE_END).sweep - 0.28) < 0.02,
+              `${(100 * at(TIMELINE.SETTLE_END).sweep).toFixed(0)}% (ref 28%)`);
+            ok('it passes the reference Weighing sweep midway',
+              Math.abs(at((TIMELINE.SETTLE_END + TIMELINE.COUNT_END) / 2).sweep - 0.65) < 0.02,
+              `${(100 * at((TIMELINE.SETTLE_END + TIMELINE.COUNT_END) / 2).sweep).toFixed(0)}% (ref 65%)`);
             ok('the circle closes exactly as the readout finishes',
               at(TIMELINE.COUNT_END - 1).sweep > 0.99,
               `${(100 * at(TIMELINE.COUNT_END - 1).sweep).toFixed(1)}%`);
@@ -496,8 +524,8 @@
             {
               const step = 50;
               const rates = [];
-              let prev = at(0).sweep;
-              for (let t = step; t <= TIMELINE.COUNT_END; t += step) {
+              let prev = at(TIMELINE.SETTLE_END).sweep;
+              for (let t = TIMELINE.SETTLE_END + step; t <= TIMELINE.COUNT_END; t += step) {
                 const v = at(t).sweep;
                 rates.push(v - prev);
                 prev = v;
@@ -515,7 +543,7 @@
             /* --- phase 2: the morph, which must finish before the burst --- */
             const morph = [2100, 2160, 2220, 2280, 2340, 2400, 2460].map(at);
             ok('the point count never changes through the morph',
-              morph.every((v) => v.n === at(0).n));
+              morph.every((v) => v.n === at(live[0]).n));
             ok('the stroke starts on the circle and ends well off it',
               morph[0].dev < 0.05 && morph[morph.length - 1].dev > G.RING_R / 2,
               morph.map((v) => v.dev.toFixed(2)).join(' '));
@@ -568,17 +596,43 @@
                 `y ${Math.min(...ys).toFixed(2)}..${Math.max(...ys).toFixed(2)}`);
             }
 
-            /* --- it never disappears, and never moves --- */
+            /* --- once it is there it never disappears, and never moves --- */
             {
               const bad = [];
-              for (let t = 0; t <= 2700; t += 25) {
+              for (let t = TIMELINE.SETTLE_END + 25; t <= 2700; t += 25) {
                 l.__debug.scrub(t);
                 const b = arc.getBoundingClientRect();
-                if (!(b.width > 0 && b.height > 0)) bad.push(t);
+                if (!(b.width > 0 && b.height > 0) || +ringG.getAttribute('opacity') === 0) {
+                  bad.push(t);
+                }
               }
-              ok('the green stroke is on screen at every single frame',
+              ok('from the settle on, the green stroke is never absent',
                 bad.length === 0,
                 bad.length ? `absent at ${bad.slice(0, 5).join(',')}ms` : 'never absent');
+            }
+
+            /* --- the rays come out from BEHIND the circle --- */
+            {
+              const rays = [...sparkG.children];
+              ok('each ray fades along its own length, like the grey streaks',
+                rays.every((e) => /^url\(#.*-ray-\d+\)$/.test(e.getAttribute('stroke'))),
+                rays[0].getAttribute('stroke'));
+              const reach = (t) => {
+                l.__debug.scrub(t);
+                return Math.max(...rays.map((e) => Math.hypot(
+                  parseFloat(e.getAttribute('x2')) - G.VB_W / 2,
+                  parseFloat(e.getAttribute('y2')) - G.RING_CY)));
+              };
+              ok('at rest every ray is tucked inside the disc, so the disc hides it',
+                reach(2100) < G.STATUS_D,
+                `${reach(2100).toFixed(2)} vs disc ${G.STATUS_D}`);
+              const grow = [2460, 2500, 2560, 2620].map(reach);
+              ok('they grow outward past the rim, never jump into place',
+                grow.every((v, i) => i === 0 || v > grow[i - 1]) &&
+                grow[0] < G.STATUS_D && grow[grow.length - 1] > G.STATUS_D,
+                grow.map((v) => v.toFixed(1)).join(' '));
+              ok('they are drawn beneath the disc',
+                !!(sparkG.compareDocumentPosition(disc) & Node.DOCUMENT_POSITION_FOLLOWING));
             }
             {
               const dcx = disc.getAttribute('cx'), dcy = disc.getAttribute('cy');
@@ -624,14 +678,13 @@
               const dg = q(d.root, '.swish-loader__ring');
               const span = (t) => {
                 d.__debug.scrub(t);
-                const P = dg.children[2].getAttribute('points').trim().split(/\s+/);
-                return P.length;
+                return dg.children[3].getAttribute('points').trim().split(/\s+/).length;
               };
-              d.__debug.scrub(300);
-              const s1 = dg.children[2].getAttribute('points');
-              d.__debug.scrub(900);
+              d.__debug.scrub(1400);
+              const s1 = dg.children[3].getAttribute('points');
+              d.__debug.scrub(1900);
               ok('it survives degraded mode and still advances',
-                span(900) > 0 && dg.children[2].getAttribute('points') !== s1 &&
+                span(1900) > 0 && dg.children[3].getAttribute('points') !== s1 &&
                 ![...dg.querySelectorAll('*')].some((e) => e.hasAttribute('filter')));
               d.destroy();
             }
@@ -639,17 +692,18 @@
               const rm = await make({ loop: false, reducedMotion: true });
               const rg = q(rm.root, '.swish-loader__ring');
               ok('the reduced-motion still shows the finished check and burst',
-                +rg.children[3].getAttribute('opacity') === 1 &&
-                +rg.children[1].getAttribute('opacity') === 0,
-                `burst ${rg.children[3].getAttribute('opacity')}, track ${rg.children[1].getAttribute('opacity')}`);
+                +rg.getAttribute('opacity') === 1 &&
+                +rg.children[0].getAttribute('opacity') === 1 &&
+                +rg.children[2].getAttribute('opacity') === 0,
+                `burst ${rg.children[0].getAttribute('opacity')}, track ${rg.children[2].getAttribute('opacity')}`);
               rm.destroy();
             }
             /* --- pure in t, and free of history --- */
             const z1 = at(2200), z2 = at(2400), z3 = at(2200);
             ok('the indicator is a pure function of t',
               z1.dev === z3.dev && z1.dev !== z2.dev);
-            at(0); const fwd = JSON.stringify(at(600));
-            at(2700); const back = JSON.stringify(at(600));
+            at(1200); const fwd = JSON.stringify(at(1600));
+            at(2700); const back = JSON.stringify(at(1600));
             ok('scrubbing back from the check restores the ring exactly',
               fwd === back, back);
           }

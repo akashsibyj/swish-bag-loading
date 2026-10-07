@@ -389,6 +389,14 @@ const T_DOTS_IN = 120;
  *   + T_BURST_IN           burst: the glow reaches out around it
  *                          and there is still room before T_HOLD_END
  */
+/**
+ * The indicator does not exist until the bag is DOWN AND STILL. Nothing of
+ * it is drawn before T_SETTLE_END - not the disc, not the track, not a
+ * zero-length arc - so the fall belongs to the bag and the motion streaks
+ * alone, and the weigh begins when there is something on the scale to weigh.
+ */
+const T_STATUS_IN = 180;
+
 const T_DONE_IN = 360;
 const T_BURST_IN = 160;
 const T_DONE_END = T_COUNT_END + T_DONE_IN;
@@ -631,8 +639,8 @@ function solveStreaks(t) {
  * Sweep of the progress arc, as a fraction of the circle.
  *
  * A MONOTONE CUBIC through three anchors - the reference's Processing sweep
- * at t=0, its Weighing sweep as the bag settles, and a closed circle as the
- * readout finishes. The tangent at the middle anchor is the average of the
+ * as the indicator arrives, its Weighing sweep halfway through the readout,
+ * and a closed circle as the readout finishes. The tangent at the middle anchor is the average of the
  * two secant slopes, which is what makes the curve C1 there.
  *
  * That is the whole point. An earlier version eased each leg separately with
@@ -643,13 +651,14 @@ function solveStreaks(t) {
  * the whole span cannot do that: its rate is positive everywhere.
  */
 const SWEEP_ANCHORS = [
-  [0, PROC_MIN],
-  [T_SETTLE_END, PROC_MID],
+  [T_SETTLE_END, PROC_MIN],
+  [(T_SETTLE_END + T_COUNT_END) / 2, PROC_MID],
   [T_COUNT_END, 1]
 ];
 
 function sweepAt(t) {
   const [[t0, v0], [t1, v1], [t2, v2]] = SWEEP_ANCHORS;
+  if (t <= t0) return v0;
   const s1 = (v1 - v0) / (t1 - t0);
   const s2 = (v2 - v1) / (t2 - t1);
   const m = [s1, (s1 + s2) / 2, s2];          // tangents, Fritsch-Carlson safe
@@ -685,6 +694,8 @@ function solveStatus(t) {
   const morph = easeInOutCubic(clamp01((t - T_COUNT_END) / T_DONE_IN));
 
   return {
+    // Nothing at all until the bag has landed and stopped moving.
+    appear: clamp01((t - T_SETTLE_END) / T_STATUS_IN),
     sweep: sweepAt(t),
     morph,
     // The track goes as the ring stops being a ring. Gone by the halfway
@@ -842,6 +853,26 @@ function buildStage() {
   }
   defs.appendChild(gg);
 
+  // One gradient per ray, along that ray's own direction, so each is solid
+  // where it leaves the disc and fades to nothing at its tip - the same trick
+  // the grey motion streaks use during the fall, and for the same reason:
+  // a ray that ends in a hard cap reads as a bar, not as light.
+  //
+  // objectBoundingBox units, NOT userSpaceOnUse: the rays grow outward as
+  // they appear, and a gradient pinned to stage coordinates would slide
+  // through them while they moved. In bbox units it rides the geometry.
+  STATUS_SPARKS.forEach(([p0], i) => {
+    const sx = p0[0] < 0 ? 1 : 0;
+    const sy = p0[1] < 0 ? 1 : 0;
+    const rg = el('linearGradient', {
+      id: `${id}-ray-${i}`, x1: sx, y1: sy, x2: 1 - sx, y2: 1 - sy
+    });
+    for (const [o, a] of [['0', '1'], ['0.55', '0.85'], ['1', '0']]) {
+      rg.appendChild(el('stop', { offset: o, 'stop-color': RING_GREEN, 'stop-opacity': a }));
+    }
+    defs.appendChild(rg);
+  });
+
 
   // One gradient per streak, spanning that line's own length, so each fades
   // to nothing at its top end. This is what stops them reading as solid bars:
@@ -905,7 +936,22 @@ function buildStage() {
 
      On the svg root, NOT in the scale group, so the plate's compression at
      impact cannot squash it - it is on the ground. */
-  const ringG = el('g', { class: 'swish-loader__ring' });
+  const ringG = el('g', { class: 'swish-loader__ring', opacity: '0' });
+
+  // FIRST, so the disc paints over them: the rays start wholly inside the
+  // disc's radius and grow outward, so they are hidden by it until they
+  // clear its edge. That is what makes them read as coming from BEHIND the
+  // circle rather than being switched on beside it.
+  const sparkG = el('g', { class: 'swish-loader__status-spark', opacity: '0' });
+  const sparks = STATUS_SPARKS.map((_, i) =>
+    el('line', {
+      stroke: `url(#${id}-ray-${i})`, 'stroke-width': SPARK_W,
+      'stroke-linecap': 'round'
+    })
+  );
+  for (const ln of sparks) sparkG.appendChild(ln);
+  ringG.appendChild(sparkG);
+
   ringG.appendChild(el('circle', {
     class: 'swish-loader__status-disc',
     cx: PIVOT_X, cy: RING_CY, r: STATUS_D, fill: DISC_FILL
@@ -920,14 +966,6 @@ function buildStage() {
     'stroke-linecap': 'round', 'stroke-linejoin': 'round'
   });
   ringG.appendChild(ringArc);
-  const sparkG = el('g', { class: 'swish-loader__status-spark', opacity: '0' });
-  const sparks = STATUS_SPARKS.map(() =>
-    el('line', {
-      stroke: RING_GREEN, 'stroke-width': SPARK_W, 'stroke-linecap': 'round'
-    })
-  );
-  for (const ln of sparks) sparkG.appendChild(ln);
-  ringG.appendChild(sparkG);
   svg.appendChild(ringG);
 
   /* --- scale (its own group so it can compress under the impact) ----- */
@@ -1300,6 +1338,7 @@ export function createSwishLoader(opts = {}) {
        check as the morph runs. At morph 0 that is exactly the arc; at 1 it
        is exactly the check; in between it is the same stroke on its way
        from one to the other. */
+    setAttr(parts.ringG, 'opacity', status.appear.toFixed(3));
     {
       const m = status.morph;
       const span = status.sweep * TAU;
@@ -1322,8 +1361,11 @@ export function createSwishLoader(opts = {}) {
       // <line> is 0, which is the far corner of the viewBox - the group's
       // bounding box would stretch there and the indicator would measure as
       // a wide rectangle instead of a circle for the whole of the fall.
-      // Eased out from the disc, so they extend rather than switch on.
-      const k = 0.55 + 0.45 * status.spark;
+      // Starts at 0.62, which puts even the OUTER tip at 0.91 of the disc's
+      // radius - inside it, and so behind it. The rays are therefore
+      // invisible until they have grown past the disc's edge, which is the
+      // whole point of drawing them underneath it.
+      const k = 0.62 + 0.38 * status.spark;
       for (let i = 0; i < parts.sparks.length; i++) {
         const [p0, p1] = STATUS_SPARKS[i];
         setAttr(parts.sparks[i], 'x1', (PIVOT_X + p0[0] * k).toFixed(2));
