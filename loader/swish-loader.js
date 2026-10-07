@@ -1327,10 +1327,20 @@ function buildStage() {
    * every transform the scale does - including the compression at impact -
    * and is positioned in viewBox units like everything else. See LED_X for
    * why it sits at the left of the glass rather than dead centre.
+   *
+   * It takes SEG_ON, the same green as the readout's segments, rather than
+   * carrying a literal of its own. They are lamps behind the same panel, so
+   * two colours read as two different kinds of light; sharing the constant
+   * also means they cannot drift apart when one of them is retuned.
+   *
+   * It does NOT follow the readout's hot overshoot on the final reveal.
+   * That is a filament flaring as a character lands, which is a thing that
+   * happens to a character - the standby lamp just sits there, and it sits
+   * there at the base colour.
    */
   const pilot = el('circle', {
     class: 'swish-loader__led',
-    cx: LED_X, cy: LED_Y, r: LED_R, fill: '#00C853', opacity: '1',
+    cx: LED_X, cy: LED_Y, r: LED_R, fill: SEG_ON, opacity: '1',
     filter: `url(#${id}-led)`
   });
   displayG.appendChild(pilot);

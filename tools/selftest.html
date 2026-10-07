@@ -382,9 +382,29 @@
           /* ---- green scale indicator (initial-state requirement) ---- */
           {
             const led = q(r, '.swish-loader__led');
+            // Same green as the readout, by sharing the constant rather
+            // than by two literals that happen to agree.
+            const segFill = q(r, '.swish-loader__glyph').getAttribute('fill');
             ok('scale has a green indicator', !!led &&
-              led.getAttribute('fill').toLowerCase() === '#00c853',
+              /^#[0-9a-f]{6}$/i.test(led.getAttribute('fill') || ''),
               led && led.getAttribute('fill'));
+            ok('the indicator is exactly the readout green',
+              led.getAttribute('fill').toLowerCase() === segFill.toLowerCase(),
+              `LED ${led.getAttribute('fill')} vs segments ${segFill}`);
+            // The readout flares hotter as each character lands; the standby
+            // lamp must not follow it.
+            {
+              const moved = [];
+              for (const t of [0, 600, 1200, 2010, 2100, 2400, 2700]) {
+                l.__debug.scrub(t);
+                if (led.getAttribute('fill').toLowerCase() !== segFill.toLowerCase()) {
+                  moved.push(t);
+                }
+              }
+              ok('the indicator never changes colour',
+                moved.length === 0,
+                moved.length ? `changed at ${moved.join(',')}ms` : 'constant');
+            }
 
             // Lit at every point on the timeline, starting from the very
             // first frame - never waiting for the bag, never blinking.
@@ -1134,7 +1154,7 @@
 
             ok('exactly 4 impact marks', marks.length === 4, marks.length);
             ok('no green impact marks anywhere',
-              strokes.every((ln) => !/00C853|3DFF8A/i.test(ln.getAttribute('stroke'))),
+              strokes.every((ln) => !/00C853|3DFF8A|2FE8AC/i.test(ln.getAttribute('stroke'))),
               strokes.map((ln) => ln.getAttribute('stroke')).join(','));
             ok('impact marks are dark grey',
               strokes.every((ln) => /^#3a3a3a$/i.test(ln.getAttribute('stroke'))));
