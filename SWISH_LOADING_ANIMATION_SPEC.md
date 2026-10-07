@@ -10,7 +10,7 @@
 
 ## 1. Intent
 
-A 3-second, seamlessly looping loading animation on a **pure white page**.
+A 3.34-second, seamlessly looping loading animation on a **pure white page**.
 A SWiSH kraft paper bag falls vertically, lands on a silver kitchen scale with a
 small bounce, the scale settles, and the green digital display progressively
 counts up the brand name: `S...` → `SW...` → `SWi...` → `SWiSH`. The final
@@ -102,7 +102,7 @@ would otherwise paint over whatever sits above the stage on the way in.
 
 ---
 
-## 4. Master Timeline (3000 ms, loops seamlessly)
+## 4. Master Timeline (3340 ms, loops seamlessly)
 
 | # | Window | Phase | What moves |
 |---|---|---|---|
@@ -110,7 +110,7 @@ would otherwise paint over whatever sits above the stage on the way in.
 | 2 | `600 – 900 ms` | **Impact + bounce** | Squash, rebound, scale depresses, lines flash |
 | 3 | `900 – 1200 ms` | **Settle** | Residual oscillation damps to zero; display wakes |
 | 4 | `1200 – 2100 ms` | **Count** | `S` → `SW` → `SWi` → `SWiSH`, 225 ms per step |
-| 5 | `2100 – 3000 ms` | **Hold + exit** | Full name glows steady; fade out or hand off |
+| 5 | `2100 – 3340 ms` | **Done + exit** | Ring folds to a check, halts, rays appear; fade out or hand off |
 
 ### 4.1 Phase 1 — Drop (0–600 ms)
 
@@ -343,18 +343,24 @@ Per-step micro-motion — this is what stops it looking like four static frames:
   (`#00C853` → `#3DFF8A` → `#00C853`) plus one extra bounce-line flash
   (frame 10 — the success state).
 
-### 4.5 Phase 5 — Hold & exit (2100–3000 ms)
+### 4.5 Phase 5 — Done & exit (2100–3340 ms)
 
-- `2100 – 2700 ms` — full `SWiSH` holds. Not frozen: a `±3%` glow breathe on a
-  1.2 s sine. Absolute stillness looks like a crashed animation; a slow
-  breathe looks alive.
+- `2100 – 3040 ms` — full `SWiSH` holds while the status indicator finishes:
+  the ring folds into the check (2100–2420), the check is held perfectly
+  still for 300 ms (2420–2720), the rays ease out and fade in (2720–2860),
+  and the Done state holds (2860–3040). The halt is deliberate and total —
+  nothing anywhere on the stage moves across it.
 
-  **REVISED IN BUILD.** The bag also carried a `±0.5` unit vertical float.
-  It has been removed: the readout's breathe already carries the "still
-  working" signal, and anything that lifts the bag off the plate is a gap in
-  the one frame the whole animation exists to arrive at. The bag now holds
-  dead level and flush.
-- `2700 – 3000 ms` — **loop seam.** The whole stage fades `opacity 1 → 0` over
+  **REVISED IN BUILD.** This phase was originally a 1.2 s glow breathe on the
+  readout plus a `±0.5` unit vertical float on the bag, on the reasoning that
+  absolute stillness reads as a crashed animation. Both are gone. The float
+  went first: anything that lifts the bag off the plate is a gap in the one
+  frame the whole animation exists to arrive at, so the bag holds dead level
+  and flush. The breathe went with the readout's glow, which had to go for the
+  lettering to be crisp. What carries the "still working" signal now is the
+  status indicator, and the stillness is the point rather than a problem —
+  the 300 ms halt is what makes the rays read as a separate beat.
+- `3040 – 3340 ms` — **loop seam.** The whole stage fades `opacity 1 → 0` over
   240 ms (`easeInOutQuad`), 60 ms of blank white, then the cycle restarts with
   the bag already off-stage. Because the first and last rendered frames are both
   *empty white*, the loop is genuinely seamless — no visible snap-back.
@@ -417,7 +423,7 @@ opacity breathe (2 s, `±4%`) is the only permitted movement — it signals
 
 ### 7.2 Tab hidden / backgrounded
 `requestAnimationFrame` is throttled or halted by the browser. Because the loop
-is **time-based** (`elapsed % 3000` from a stored start timestamp) and not
+is **time-based** (`elapsed % 3340` from a stored start timestamp) and not
 frame-counted, it resumes at the correct point rather than fast-forwarding.
 Additionally: on `visibilitychange → hidden`, cancel the rAF; on `→ visible`,
 re-anchor the start timestamp so the cycle resumes mid-phase cleanly instead of

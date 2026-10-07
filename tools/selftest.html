@@ -558,7 +558,7 @@
               live.every((t) => { const v = at(t); return v.track === 1 && v.spark === 0; }));
 
             /* --- phase 2: the morph, which must finish before the burst --- */
-            const morph = [2100, 2160, 2220, 2280, 2340, 2400, 2460].map(at);
+            const morph = [2100, 2160, 2220, 2280, 2340, 2380, TIMELINE.DONE_END].map(at);
             ok('the point count never changes through the morph',
               morph.every((v) => v.n === at(live[0]).n));
             ok('the stroke starts on the circle and ends well off it',
@@ -580,13 +580,48 @@
             ok('no ray anywhere while the check is still drawing',
               morph.every((v) => v.spark === 0),
               morph.map((v) => v.spark).join(' '));
-            // And a beat of stillness after it, so the two are not one event.
-            ok('the finished check is held still before the rays start',
+            // And a HALT after it, long enough to be read as a pause.
+            const gap = TIMELINE.BURST_START - TIMELINE.DONE_END;
+            ok('there is a pause of 250-350ms between the check and the rays',
+              gap >= 250 && gap <= 350 &&
               at(TIMELINE.DONE_END).spark === 0 &&
-              at(TIMELINE.BURST_START - 1).spark === 0 &&
-              TIMELINE.BURST_START > TIMELINE.DONE_END,
-              `${TIMELINE.BURST_START - TIMELINE.DONE_END}ms gap`);
-            const burst = [TIMELINE.BURST_START, 2560, 2600, 2650, 2700].map(at);
+              at(TIMELINE.BURST_START - 1).spark === 0,
+              `${gap}ms`);
+
+            /* NOTHING ANYWHERE MOVES ACROSS THE PAUSE. Not the indicator,
+               not the bag, not the readout, not the shadow or the streaks.
+               Every animated attribute in the whole scene is collected and
+               compared frame to frame, so this catches a stray tween
+               anywhere on the stage, not just one this block knows about. */
+            {
+              const sig = (t) => {
+                l.__debug.scrub(t);
+                return [...q(r, 'svg').querySelectorAll('*')]
+                  .map((e) => ['transform', 'opacity', 'points', 'd', 'r',
+                               'cx', 'cy', 'x1', 'y1', 'x2', 'y2', 'fill',
+                               'stroke-width', 'stroke-dasharray', 'stroke-dashoffset']
+                    .map((a) => e.getAttribute(a) ?? '').join('|'))
+                  .join('\n');
+              };
+              const first = sig(TIMELINE.DONE_END);
+              const moved = [];
+              for (let t = TIMELINE.DONE_END; t <= TIMELINE.BURST_START; t += 20) {
+                if (sig(t) !== first) moved.push(t);
+              }
+              ok('the whole stage is frozen for the entire pause',
+                moved.length === 0,
+                moved.length ? `something moved at ${moved.slice(0, 4).join(',')}ms`
+                             : `frozen ${TIMELINE.DONE_END}-${TIMELINE.BURST_START}ms`);
+              // And it really is the FINISHED check that is being held.
+              l.__debug.scrub(TIMELINE.BURST_START);
+              const held = arc.getAttribute('points');
+              l.__debug.scrub(TIMELINE.HOLD_END);
+              ok('what is held through the pause is the finished check',
+                arc.getAttribute('points') === held);
+            }
+            const burst = [TIMELINE.BURST_START, TIMELINE.BURST_START + 40,
+                           TIMELINE.BURST_START + 90, TIMELINE.BURST_START + 140,
+                           TIMELINE.HOLD_END].map(at);
             ok('the rays fade in once the check is complete, never snap',
               burst.every((v, i) => i === 0 || v.spark >= burst[i - 1].spark) &&
               burst[0].spark === 0 && burst[burst.length - 1].spark === 1,
@@ -620,7 +655,7 @@
             /* --- once it is there it never disappears, and never moves --- */
             {
               const bad = [];
-              for (let t = TIMELINE.SETTLE_END + 25; t <= 2700; t += 25) {
+              for (let t = TIMELINE.SETTLE_END + 25; t <= TIMELINE.HOLD_END; t += 25) {
                 l.__debug.scrub(t);
                 const b = arc.getBoundingClientRect();
                 if (!(b.width > 0 && b.height > 0) || +ringG.getAttribute('opacity') === 0) {
@@ -658,13 +693,16 @@
                 inner0 > G.STATUS_D,
                 `nearest end ${(inner0 / G.STATUS_D).toFixed(3)} of the disc radius`);
               ok('no ray is ever behind the disc, at any frame',
-                [2100, 2300, 2460, TIMELINE.BURST_START, 2560, 2620, 2700]
+                [2100, 2300, TIMELINE.DONE_END, TIMELINE.BURST_START,
+                 TIMELINE.BURST_START + 70, TIMELINE.HOLD_END]
                   .every((t) => near(t) > G.STATUS_D));
               ok('they are drawn on top of the disc, not under it',
                 !!(disc.compareDocumentPosition(sparkG) & Node.DOCUMENT_POSITION_FOLLOWING));
 
               // A short outward move, not a long slide.
-              const grow = [TIMELINE.BURST_START, 2560, 2600, 2650].map(reach);
+              const grow = [TIMELINE.BURST_START, TIMELINE.BURST_START + 50,
+                            TIMELINE.BURST_START + 100, TIMELINE.BURST_START + 140]
+                .map(reach);
               ok('they ease a short way outward, never jump into place',
                 grow.every((v, i) => i === 0 || v > grow[i - 1]) &&
                 (grow[grow.length - 1] - grow[0]) / grow[grow.length - 1] < 0.2,
@@ -674,7 +712,7 @@
             {
               const dcx = disc.getAttribute('cx'), dcy = disc.getAttribute('cy');
               ok('the indicator never moves',
-                [0, 600, 1200, 2100, 2400, 2700].every((t) => {
+                [0, 600, 1200, 2100, 2400, TIMELINE.HOLD_END].every((t) => {
                   l.__debug.scrub(t);
                   return disc.getAttribute('cx') === dcx && disc.getAttribute('cy') === dcy;
                 }));
@@ -684,7 +722,7 @@
             {
               const svgB = q(r, 'svg').getBoundingClientRect();
               const bad = [];
-              for (let t = 0; t <= 2700; t += 25) {
+              for (let t = 0; t <= TIMELINE.HOLD_END; t += 25) {
                 l.__debug.scrub(t);
                 const b = ringG.getBoundingClientRect();
                 if (b.bottom > svgB.bottom + 0.5 || b.top < svgB.top - 0.5 ||
@@ -696,7 +734,7 @@
                 G.STATUS_D <= G.VB_H - G.RING_CY);
             }
             {
-              l.__debug.scrub(2400);
+              l.__debug.scrub(TIMELINE.DONE_END);
               const w = disc.getBoundingClientRect().width;
               l.__debug.scrub(620);
               ok('it does not squash with the plate',
@@ -736,11 +774,11 @@
               rm.destroy();
             }
             /* --- pure in t, and free of history --- */
-            const z1 = at(2200), z2 = at(2400), z3 = at(2200);
+            const z1 = at(2200), z2 = at(TIMELINE.DONE_END), z3 = at(2200);
             ok('the indicator is a pure function of t',
               z1.dev === z3.dev && z1.dev !== z2.dev);
             at(1200); const fwd = JSON.stringify(at(1600));
-            at(2700); const back = JSON.stringify(at(1600));
+            at(TIMELINE.HOLD_END); const back = JSON.stringify(at(1600));
             ok('scrubbing back from the check restores the ring exactly',
               fwd === back, back);
           }

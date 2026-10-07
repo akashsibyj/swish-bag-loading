@@ -1,6 +1,6 @@
 # SWiSH — Bag-on-Scale Loading Animation
 
-A 3-second, seamlessly looping loader on a pure white page. A kraft bag falls
+A 3.34-second, seamlessly looping loader on a pure white page. A kraft bag falls
 vertically, lands on a silver scale with a small bounce, the scale settles,
 and the green digital display fills a fixed five-cell readout,
 `.....` → `S....` → `SW...` → `SWi..` → `SWiS.` → `SWiSH`. A progress ring
@@ -150,8 +150,11 @@ cost one frame instead of desynchronising the animation.
 | 600 – 900 ms | Compress **then** rebound — plate depresses with the bag, staggered bounce lines |
 | 900 – 1200 ms | Settle — damped vertical wobble, flush and still by 1200 ms |
 | 1200 – 2100 ms | Count — 225 ms/step, per-glyph fade+rise, dots nudged along one cell at a time |
-| 2100 – 2700 ms | Hold — glow breathe and a ±0.5 unit float, so it never reads as frozen |
-| 2700 – 3000 ms | Seam — fade to blank white, then restart. The loop is invisible because the first and last frames are both empty. |
+| 2100 – 2420 ms | The status ring folds into the check mark |
+| 2420 – 2720 ms | **Halt** — the finished check held perfectly still. Nothing on the stage moves. |
+| 2720 – 2860 ms | The success rays ease out from their own points and fade in |
+| 2860 – 3040 ms | Done state holds |
+| 3040 – 3340 ms | Seam — fade to blank white, then restart. The loop is invisible because the first and last frames are both empty. |
 
 Details that carry the weight, in rough order of how much they matter:
 

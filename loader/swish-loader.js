@@ -434,17 +434,6 @@ const T_COUNT_END = 2100;
 /** Placeholder dots ramp up just before the count, so "....." is seen. */
 const T_DOTS_IN = 120;
 /**
- * Done, in three strictly ordered beats. They do not overlap: the ring is a
- * closed circle before the morph starts, the check is fully formed before
- * the burst starts, and the burst is finished before the hold fades.
- *
- *   T_COUNT_END            ring is closed, readout reads SWiSH
- *   + T_DONE_IN            morph: the ring folds into the check
- *   + T_DONE_GAP           the finished check, held still
- *   + T_BURST_IN           the rays, each easing out from its own start
- *                          and still 50ms clear of T_HOLD_END
- */
-/**
  * The indicator does not exist until the bag is DOWN AND STILL. Nothing of
  * it is drawn before T_SETTLE_END - not the disc, not the track, not a
  * zero-length arc - so the fall belongs to the bag and the motion streaks
@@ -452,20 +441,47 @@ const T_DOTS_IN = 120;
  */
 const T_STATUS_IN = 180;
 
-const T_DONE_IN = 360;
 /**
- * A beat of stillness after the check is complete and before the rays start.
- * Without it the two run back to back and read as one event; with it the
- * check is unmistakably finished first.
+ * Done, in four strictly ordered beats. They do not overlap, and the third
+ * is a deliberate HALT - nothing on the whole stage moves across it:
+ *
+ *   T_COUNT_END     2100   ring closed, readout reads SWiSH
+ *   + T_DONE_IN      320   the ring folds into the check
+ *   + T_DONE_GAP     300   the finished check, held perfectly still
+ *   + T_BURST_IN     140   the rays, each easing out from its own start
+ *   + T_DONE_HOLD    180   the finished Done state, before the fade
+ *
+ * THE PAUSE IS WHY THE CYCLE GREW. Those four beats need 940ms after the
+ * readout ends, and the old 3000ms cycle left only 600. A 300ms halt cannot
+ * be fitted into that without compressing the morph into something that
+ * reads as a snap, so T_HOLD_END and T_CYCLE are derived from the beats
+ * below rather than being the literals they were. The bag, the landing and
+ * the SWiSH count are all untouched; only the tail after them is longer.
  */
-const T_DONE_GAP = 50;
+const T_DONE_IN = 320;
+/**
+ * The halt. Long enough to be read as a pause rather than as a hesitation -
+ * the eye needs roughly a quarter of a second to register that something has
+ * stopped - and the whole scene is genuinely static across it, not merely
+ * the indicator.
+ */
+const T_DONE_GAP = 300;
 const T_BURST_IN = 140;
+/** The finished Done state, held before the cycle fades out. */
+const T_DONE_HOLD = 180;
 const T_DONE_END = T_COUNT_END + T_DONE_IN;
 const T_BURST_START = T_DONE_END + T_DONE_GAP;
+const T_BURST_END = T_BURST_START + T_BURST_IN;
 
-const T_HOLD_END = 2700;
+/**
+ * Derived from the beats above, not set by hand: the hold cannot end before
+ * the rays have finished, and the cycle cannot restart before the fade has.
+ * As literals these drifted out of step every time a beat moved.
+ */
+const T_HOLD_END = T_BURST_END + T_DONE_HOLD;      // 3040
 const T_FADE = 240;
-const T_CYCLE = 3000;
+/** The 60ms of blank white after the fade is what hides the loop's seam. */
+const T_CYCLE = T_HOLD_END + T_FADE + 60;          // 3340
 
 /**
  * A FIXED FIVE-CELL DISPLAY.
