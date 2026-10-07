@@ -47,7 +47,9 @@
         const scale = f(root.querySelector('.swish-loader__scale'));
         const led = f(root.querySelector('.swish-loader__led'));
         const lines = [...root.querySelectorAll('.swish-loader__streaks line')].map(f);
-        const db = root.querySelector('.swish-loader__ring').getBoundingClientRect();
+        // The disc is the round part; the group also holds the burst, which
+        // is deliberately wider than it is tall.
+        const db = root.querySelector('.swish-loader__status-disc').getBoundingClientRect();
         const ringEl = root.querySelector('.swish-loader__ring');
         const rb = ringEl.getBoundingClientRect();
         const ring = f(ringEl);
@@ -107,8 +109,8 @@
           ok(`aspect held at ${w}px`, near(s.aspect, 400 / 420, 0.01), s.aspect.toFixed(4));
           ok(`ring circular at ${w}px`, near(s.ringRound, 1, 0.02), s.ringRound.toFixed(4));
           ok(`ring unclipped at ${w}px`, s.ringInStage);
-          ok(`done badge circular at ${w}px`, near(s.doneRound, 1, 0.03), s.doneRound.toFixed(4));
-          ok(`done badge unclipped at ${w}px`, s.doneInStage);
+          ok(`status disc circular at ${w}px`, near(s.doneRound, 1, 0.03), s.doneRound.toFixed(4));
+          ok(`status indicator unclipped at ${w}px`, s.doneInStage && s.ringInStage);
         }
 
         // Cross-width: attachment offsets must be identical everywhere.
@@ -118,7 +120,7 @@
             near(snaps[i].s.ringVsScale.dy, snaps[0].s.ringVsScale.dy, 0.002) &&
             near(snaps[i].s.ringW, snaps[0].s.ringW, 0.002),
             `dy ${snaps[i].s.ringVsScale.dy.toFixed(4)} w ${snaps[i].s.ringW.toFixed(4)}`);
-          ok(`done badge holds its size at ${snaps[i].w}px`,
+          ok(`status disc holds its size at ${snaps[i].w}px`,
             near(snaps[i].s.doneW, snaps[0].s.doneW, 0.002), snaps[i].s.doneW.toFixed(4));
           ok(`attachment identical at ${snaps[i].w}px vs ${snaps[0].w}px`,
             sameAttachment(snaps[0].s, snaps[i].s),

@@ -211,89 +211,114 @@ const LED_Y = GLASS_CY;
 const LED_R = 2 * U;
 
 /**
- * Processing ring: the indeterminate indicator that runs while the bag is in
- * the air and on its way to rest.
+ * STATUS INDICATOR - Processing -> Weighing -> Done.
  *
- * Sits below the scale, on PIVOT_X, so it is centred on the scale by sharing
- * the scale's own centre line rather than by a number that has to be kept in
- * step with it. All three values are multiples of U, the scene scale, so the
- * ring holds its proportion to the scale at every size the loader is drawn
- * at - the same mechanism everything else here uses.
+ * Sits below the scale on PIVOT_X, so it is centred on the scale by sharing
+ * the scale's own centre line rather than by a number kept in step with it.
  *
- * Sizes measured OFF THE REFERENCE rather than picked: there the stroke is
- * 34px on a 145-156px centreline radius, i.e. 0.228 of the radius, and that
- * ratio is what makes it read as "thin, clean" at any diameter. RING_W is
- * derived from RING_R so the two can never drift apart.
+ * EVERY PROPORTION BELOW IS MEASURED OFF THE REFERENCE, as a fraction of the
+ * pale disc's radius, and derived from STATUS_D - so one number sets the size
+ * and nothing can drift out of ratio:
  *
- * The radius is then the largest that fits the band between the scale's feet
- * and the bottom of the stage with a margin to spare, so the ring is as
- * legible as the space allows and still cannot be cropped on any viewport.
+ *   pale disc    1.000           #EDFCF3
+ *   track ring   0.610 r, 0.250 stroke   #E4E7E7
+ *   green arc    0.610 r, 0.240 stroke   #01DA5C, round caps, from 12 o'clock
+ *   tick         0.244 stroke, over the three points in STATUS_TICK
+ *   sparks       four, 0.130 stroke, inner 1.17 out to 1.46
+ *
+ * STATUS_D is the largest that fits the band between the scale's feet and the
+ * bottom of the stage. The disc is the tallest part (the sparks sit near the
+ * horizontal, reaching only 0.32 of the radius above and below the centre),
+ * so the disc radius is what the band has to hold - and it is held with a
+ * margin, which is why nothing here can be cropped on any viewport.
  */
 const RING_CY = SCALE_BOTTOM_Y + (VB_H - SCALE_BOTTOM_Y) / 2;   // 406
-const RING_R = 16 * U;                                     // 11.2 centreline
-const RING_W = 0.228 * RING_R;                             // 2.55, the ref ratio
-const RING_C = 2 * Math.PI * RING_R;                       // circumference
-/** Outer edge of the stroke - what actually has to fit inside the stage. */
-const RING_OUTER = RING_R + RING_W / 2;
-/** Inner edge - the hole the morph has to close. */
-const RING_INNER = RING_R - RING_W / 2;
-/**
- * Sampled off the reference. Its progress arc and its finished disc are NOT
- * the same green: the arc is a bright #02E44C, the disc a deeper #01C334,
- * with the bright green reappearing as the glow around it. So the stroke
- * crosses from one to the other as the ring fills, which is why the badge
- * reads as lit from within rather than as a flat green coin.
- */
-const RING_GREEN = '#02E44C';
-const DONE_GREEN = '#01C334';
-const RING_TRACK = '#D8D7D7';
+const STATUS_D = (VB_H - RING_CY) - 0.5;                   // 13.5, pale disc r
+const RING_R = 0.610 * STATUS_D;                           // arc + track radius
+const RING_W = 0.240 * STATUS_D;                           // arc stroke
+const TRACK_W = 0.250 * STATUS_D;                           // track stroke
+const TICK_W = 0.244 * STATUS_D;
+const SPARK_W = 0.130 * STATUS_D;
+
+const DISC_FILL = '#EDFCF3';
+const RING_GREEN = '#01DA5C';
+const RING_TRACK = '#E4E7E7';
+
+/** Check mark, as fractions of STATUS_D: start, elbow, tip. */
+const STATUS_TICK = [[-0.50, 0.11], [-0.16, 0.33], [0.44, -0.25]];
 
 /**
- * DONE badge - the reference's third state, shown once the readout finishes
- * spelling SWiSH. A green disc with a white rim and a white tick, inside a
- * soft green halo.
- *
- * Sized DOWNWARD from the band under the scale rather than outward from a
- * chosen radius, because the halo is the widest thing the loader draws down
- * there and the stage has a hard edge at VB_H. Everything below is derived
- * from (VB_H - RING_CY), so the badge, its halo AND the overshoot of its
- * pop-in are all guaranteed to fit - there is no combination of them that
- * can reach the edge.
- *
- * The halo is a radial GRADIENT, not a blurred filter. A blur's falloff has
- * no definite radius, so it would have been clipped by the stage edge into a
- * hard line; a gradient stops exactly where it is told to. It also costs
- * nothing in degraded mode and survives forced-colours, neither of which is
- * true of a filter.
- *
- * Proportions are the reference's, measured off it: rim centreline at 0.86
- * of the disc radius with a 0.117 stroke, disc 1/1.24 of the halo.
+ * The burst. Four strokes, mirrored in both axes about the centre, so the
+ * figure is symmetric by construction rather than by four sets of numbers
+ * agreeing with each other.
  */
-// THE DISC IS THE RING - the same circle element, stroke thickened inward
-// until the hole closes. There is no second shape to line up.
-//
-// It settles a little inside the ring's outer edge, and that is what buys the
-// glow. The reference's halo reaches 1.24x its disc; the band under the scale
-// is fixed, so the only way to get that ratio is for the disc to end slightly
-// smaller than the ring it grew from. The inset is under 10%, it eases in
-// over the fill rather than stepping, and the OVERALL footprint is unchanged
-// because the halo takes up exactly what the disc gives back.
-//
-// Exactly the band under the scale. The outermost stop is fully transparent,
-// so the halo reaching the stage edge is invisible by construction - there is
-// no radius at which it could be cut into a hard line.
-const DONE_HALO_R = VB_H - RING_CY;
-const DONE_HALO_TO_DISC = 1.24;              // measured off the reference
-const DONE_R = DONE_HALO_R / DONE_HALO_TO_DISC;
-const DONE_RIM_R = 0.858 * DONE_R;           // white rim, centreline
-const DONE_RIM_W = 0.117 * DONE_R;           // the reference's 14px on 120
-const DONE_TICK_W = 0.17 * DONE_R;
-/** Tick path, in fractions of DONE_R: down-stroke then up-stroke. */
-const DONE_TICK = [[-0.40, 0.00], [-0.12, 0.30], [0.44, -0.28]];
-/** Its drawn length, computed rather than measured off the live DOM. */
-const DONE_TICK_LEN = DONE_TICK.slice(1).reduce(
-  (sum, pt, i) => sum + Math.hypot(pt[0] - DONE_TICK[i][0], pt[1] - DONE_TICK[i][1]), 0
-) * DONE_R;
+const STATUS_SPARKS = [];
+for (const sx of [-1, 1]) {
+  for (const sy of [-1, 1]) {
+    STATUS_SPARKS.push([
+      [sx * 1.17 * STATUS_D, sy * 0.12 * STATUS_D],
+      [sx * 1.46 * STATUS_D, sy * 0.32 * STATUS_D]
+    ]);
+  }
+}
+
+/**
+ * THE ARC AND THE TICK ARE ONE POLYLINE.
+ *
+ * Both are sampled to the same number of points, so the green stroke is a
+ * single element for the whole of its life: it grows as an arc by covering
+ * more of the circle, and it becomes the tick by every point easing to the
+ * matching point of the check. There is no second shape, nothing is swapped
+ * and nothing fades into anything, which is the only way "transforms into
+ * the check mark" can be literally true.
+ *
+ * The target is the check traversed OUT AND BACK - forward over the first
+ * half of the points, backward over the second. That matters: a circle is a
+ * closed loop and a check is not, and morphing a loop onto an open line
+ * forces the far side of the ring to travel across the figure, which shows
+ * as a knot halfway through. Doubling the check back on itself gives it the
+ * same closed-loop topology, so the ring simply flattens onto it - and the
+ * drawn result is identical, because the stroke retraces its own path under
+ * round caps and joins.
+ */
+const MORPH_PTS = 96;
+const TAU = Math.PI * 2;
+
+/** Resample a polyline to n points evenly spaced along its own length. */
+function resample(points, n) {
+  const seg = [];
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const d = Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+    seg.push(d);
+    total += d;
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    let want = (i / (n - 1)) * total;
+    let k = 0;
+    while (k < seg.length - 1 && want > seg[k]) {
+      want -= seg[k];
+      k++;
+    }
+    const f = seg[k] ? want / seg[k] : 0;
+    out.push([
+      points[k][0] + (points[k + 1][0] - points[k][0]) * f,
+      points[k][1] + (points[k + 1][1] - points[k][1]) * f
+    ]);
+  }
+  return out;
+}
+
+/** The check, in stage units, relative to the indicator centre. */
+const TICK_PTS = (() => {
+  const half = resample(
+    STATUS_TICK.map(([x, y]) => [x * STATUS_D, y * STATUS_D]),
+    Math.ceil(MORPH_PTS / 2)
+  );
+  const back = half.slice().reverse();
+  return half.concat(back).slice(0, MORPH_PTS);
+})();
 
 /** Ground shadow. */
 const SHADOW_CY = SCALE_BOTTOM_Y + 6 * U;
@@ -344,8 +369,8 @@ const T_DONE_IN = 420;
 
 // Measured off the reference: its "Processing" arc sweeps 85deg (24% of the
 // circle) and its "Weighing" arc 204deg (57%).
-const PROC_MIN = 0.24;                   // arc at t=0, as a fraction of C
-const PROC_MID = 0.57;                   // arc at the settle
+const PROC_MIN = 0.28;                   // the reference's Processing sweep
+const PROC_MID = 0.65;                   // the reference's Weighing sweep
 /**
  * One step per cell. Five cells now take a turn each, where the old readout
  * fired the last two 70ms apart as a finale flourish - at that spacing
@@ -410,19 +435,6 @@ const CELL0_CX = GLASS_CX - (GLYPHS.length * CELL_W) / 2 + CELL_W / 2;
  * ===================================================================== */
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
-
-/** Channel-wise blend of two #rrggbb strings. */
-function mixHex(a, b, k) {
-  const pa = parseInt(a.slice(1), 16);
-  const pb = parseInt(b.slice(1), 16);
-  let out = '#';
-  for (let sh = 16; sh >= 0; sh -= 8) {
-    const va = (pa >> sh) & 255;
-    const v = Math.round(va + (((pb >> sh) & 255) - va) * k);
-    out += v.toString(16).padStart(2, '0');
-  }
-  return out;
-}
 
 /**
  * The fall: accelerate, then cushion into contact.
@@ -603,69 +615,40 @@ function solveStreaks(t) {
 }
 
 /**
- * Processing ring. Like everything else here, a pure function of t: the arc's
- * position and length are computed from the clock, never accumulated frame to
- * frame, so a backgrounded tab or a scrub lands on exactly the right frame.
+ * Status indicator: Processing -> Weighing -> Done, as one function of t.
  *
- * Returns the arc as fractions of the circumference, leaving the stroke
- * arithmetic to the renderer.
+ * SYNCHRONISED WITH THE BAG BY CONSTRUCTION, not by matching numbers. The
+ * sweep's first leg ends on T_SETTLE_END - the exact instant the bag stops
+ * moving - so "Processing" covers the fall and the impact and "Weighing"
+ * lands as the bag settles. The second leg closes the circle on T_COUNT_END,
+ * where the readout finishes. Both are the timeline's own constants, so the
+ * indicator cannot drift from the bag even if those move.
+ *
+ * Returns fractions only; the renderer owns the geometry.
  */
-function solveRing(t) {
-  // Eased, not linear: a progress ring that advances at a dead constant rate
+function solveStatus(t) {
+  // Eased, not linear: a progress ring advancing at a dead constant rate
   // reads as a clock rather than as work being done.
-  if (t < T_SETTLE_END) {
-    return {
-      arc: PROC_MIN + (PROC_MID - PROC_MIN) *
-        easeInOutQuad(clamp01(t / T_SETTLE_END))
-    };
-  }
-  return {
-    arc: PROC_MID + (1 - PROC_MID) *
-      easeInOutQuad(clamp01((t - T_SETTLE_END) / (T_COUNT_END - T_SETTLE_END)))
-  };
-}
+  const sweep =
+    t < T_SETTLE_END
+      ? PROC_MIN + (PROC_MID - PROC_MIN) * easeInOutQuad(clamp01(t / T_SETTLE_END))
+      : PROC_MID + (1 - PROC_MID) *
+          easeInOutQuad(clamp01((t - T_SETTLE_END) / (T_COUNT_END - T_SETTLE_END)));
 
-/**
- * Done badge. Zero until the readout has finished spelling SWiSH, then pops
- * in. Pure in t like everything else, so a scrub lands on the right frame.
- *
- * Opacity arrives faster than the scale so the badge is already visible as it
- * springs, rather than fading in at its final size.
- */
-function solveDone(t) {
-  // 0 = still a ring, 1 = fully the completed tick. Every part of the morph
-  // is a phase of this one number, so nothing can get out of step, and
-  // scrubbing backwards unwinds it exactly.
+  // 0 = still a ring, 1 = fully the check. Every part of the Done state is a
+  // phase of this one number, so nothing can get out of step with anything
+  // else and scrubbing backwards unwinds it exactly.
   const p = easeInOutQuad(clamp01((t - T_COUNT_END) / T_DONE_IN));
 
-  // FILL, expressed as the stroke's two EDGES rather than as a radius and a
-  // width, because the edges are what the eye reads and what has to behave:
-  //
-  //   inner  closes to the centre, and gets there at 70% of the fill - early,
-  //          so the last of the fill cannot leave a pinhole showing through
-  //          the middle of the badge.
-  //   outer  eases from the ring's rim to the disc's, never outward.
-  //
-  // r and w are then just the midpoint and the span. Deriving them this way
-  // also keeps r comfortably above zero: a circle with r = 0 paints NOTHING
-  // however wide its stroke, which is what made the disc vanish at the end of
-  // the morph and left only the halo showing - a pale ghost, not a badge.
-  const fill = clamp01(p / 0.5);
-  const inner = RING_INNER * (1 - clamp01(fill / 0.7));
-  const outer = RING_OUTER + (DONE_R - RING_OUTER) * fill;
   return {
-    p,
-    r: (outer + inner) / 2,
-    w: outer - inner,
-    outer,
-    green: fill,
-    // The track has to go as the disc insets. While the arc is at full width
-    // the track is hidden behind it, but the finished disc is smaller than
-    // the ring was, and a grey hoop would be left standing around it.
-    track: 1 - fill,
-    halo: clamp01((p - 0.15) / 0.5),
-    rim: clamp01((p - 0.42) / 0.33),
-    tick: clamp01((p - 0.5) / 0.5)
+    sweep,
+    morph: p,
+    // The track goes as the ring stops being a ring. Gone by the halfway
+    // point, so no grey hoop is left standing where the circle used to be.
+    track: 1 - clamp01(p / 0.5),
+    // The burst arrives on the tail of the morph and eases out from the disc
+    // rather than appearing at full reach.
+    spark: clamp01((p - 0.55) / 0.45)
   };
 }
 
@@ -813,21 +796,6 @@ function buildStage() {
   }
   defs.appendChild(gg);
 
-  // Done halo. Opaque-ish at the disc's edge, gone by the gradient's own
-  // radius - which is set so it lands inside the stage, so the glow fades out
-  // rather than being cut off by it.
-  const hg = el('radialGradient', { id: `${id}-halo` });
-  // Almost all of this sits BEHIND the disc, so the stops that matter are the
-  // last few. They are bunched up against the rim to put the whole falloff in
-  // the narrow band that is actually visible - the band under the scale is
-  // only so deep, and a gradient spread evenly over the full radius would
-  // spend its gradient where nothing can see it.
-  for (const [o, c, a] of [['0', RING_GREEN, '1'], ['0.86', RING_GREEN, '1'],
-                           ['0.92', RING_GREEN, '0.62'], ['0.97', RING_GREEN, '0.22'],
-                           ['1', RING_GREEN, '0']]) {
-    hg.appendChild(el('stop', { offset: o, 'stop-color': c, 'stop-opacity': a }));
-  }
-  defs.appendChild(hg);
 
   // One gradient per streak, spanning that line's own length, so each fades
   // to nothing at its top end. This is what stops them reading as solid bars:
@@ -876,61 +844,44 @@ function buildStage() {
   });
   svg.appendChild(shadow);
 
-  /* --- processing ring, which becomes the tick ------------------------
-     ONE indicator, five layers, bottom to top:
+  /* --- status indicator ------------------------------------------------
+     Four layers, bottom to top:
 
-        halo   soft green glow, off until the morph
-        track  the full light-grey ring
-        arc    the green progress segment - and, once its stroke is
-               thickened shut, the green disc the tick sits on
-        rim    white ring inside the disc edge, off until the morph
-        tick   white check, drawn on by its own dash
+        disc    the pale mint circle, present in all three states
+        track   the grey ring the arc runs in
+        arc     ONE polyline that is the green arc AND, once it has morphed,
+                the check mark - see MORPH_PTS
+        sparks  the four-stroke burst, off until Done
 
-     The arc IS the disc. Not a second shape of the same size: the same
-     circle element, so the tick cannot land anywhere but exactly where the
-     ring was, at exactly the size it was. Nothing is ever swapped out.
-
-     The -90deg rotation puts the dash origin at twelve o'clock, where the
-     reference anchors both of its progress states. Nothing rotates and
-     nothing is offset at runtime: the segment grows clockwise from that
-     anchor while the tail stays put.
+     The arc being a polyline rather than a stroked circle is what makes the
+     Done state a transform instead of a swap: the same element, the same
+     stroke, its points eased from the circle to the check.
 
      On the svg root, NOT in the scale group, so the plate's compression at
      impact cannot squash it - it is on the ground. */
   const ringG = el('g', { class: 'swish-loader__ring' });
-  const ringHalo = el('circle', {
-    class: 'swish-loader__done-halo',
-    cx: PIVOT_X, cy: RING_CY, r: DONE_HALO_R,
-    fill: `url(#${id}-halo)`, opacity: '0'
-  });
-  ringG.appendChild(ringHalo);
+  ringG.appendChild(el('circle', {
+    class: 'swish-loader__status-disc',
+    cx: PIVOT_X, cy: RING_CY, r: STATUS_D, fill: DISC_FILL
+  }));
   const ringTrack = el('circle', {
     cx: PIVOT_X, cy: RING_CY, r: RING_R,
-    fill: 'none', stroke: RING_TRACK, 'stroke-width': RING_W
+    fill: 'none', stroke: RING_TRACK, 'stroke-width': TRACK_W
   });
   ringG.appendChild(ringTrack);
-  const ringArc = el('circle', {
-    cx: PIVOT_X, cy: RING_CY, r: RING_R,
+  const ringArc = el('polyline', {
     fill: 'none', stroke: RING_GREEN, 'stroke-width': RING_W,
-    'stroke-linecap': 'round',
-    'stroke-dashoffset': '0',
-    transform: `rotate(-90 ${PIVOT_X} ${RING_CY})`
+    'stroke-linecap': 'round', 'stroke-linejoin': 'round'
   });
   ringG.appendChild(ringArc);
-  const ringRim = el('circle', {
-    cx: PIVOT_X, cy: RING_CY, r: DONE_RIM_R,
-    fill: 'none', stroke: '#FFFFFF', 'stroke-width': DONE_RIM_W, opacity: '0'
-  });
-  ringG.appendChild(ringRim);
-  const ringTick = el('polyline', {
-    points: DONE_TICK
-      .map(([x, y]) => `${(PIVOT_X + x * DONE_R).toFixed(3)},${(RING_CY + y * DONE_R).toFixed(3)}`)
-      .join(' '),
-    fill: 'none', stroke: '#FFFFFF', 'stroke-width': DONE_TICK_W,
-    'stroke-linecap': 'round', 'stroke-linejoin': 'round',
-    'stroke-dasharray': `0 ${(DONE_TICK_LEN + 1).toFixed(3)}`, opacity: '0'
-  });
-  ringG.appendChild(ringTick);
+  const sparkG = el('g', { class: 'swish-loader__status-spark', opacity: '0' });
+  const sparks = STATUS_SPARKS.map(() =>
+    el('line', {
+      stroke: RING_GREEN, 'stroke-width': SPARK_W, 'stroke-linecap': 'round'
+    })
+  );
+  for (const ln of sparks) sparkG.appendChild(ln);
+  ringG.appendChild(sparkG);
   svg.appendChild(ringG);
 
   /* --- scale (its own group so it can compress under the impact) ----- */
@@ -1097,7 +1048,7 @@ function buildStage() {
   });
   svg.insertBefore(impactG, bagG);
 
-  return { svg, shadow, scaleG, displayG, pilot, blockG, glyphs, dots, dotsG, streakG, bagG, bagSquash, impactG, glass, ringG, ringArc, ringTrack, ringHalo, ringRim, ringTick, lineEls, filterIds: [`${id}-led`] };
+  return { svg, shadow, scaleG, displayG, pilot, blockG, glyphs, dots, dotsG, streakG, bagG, bagSquash, impactG, glass, ringG, ringArc, ringTrack, sparkG, sparks, lineEls, filterIds: [`${id}-led`] };
 }
 
 /* =====================================================================
@@ -1219,8 +1170,7 @@ export function createSwishLoader(opts = {}) {
     // as a fall.
     const streak = solveStreaks(t);
     const disp = solveDisplay(t);
-    const ring = solveRing(t);
-    const done = solveDone(t);
+    const status = solveStatus(t);
 
     // Plate compression, applied about the feet so they stay planted.
     const plateSquash = 1 - 0.035 * plate;
@@ -1298,48 +1248,43 @@ export function createSwishLoader(opts = {}) {
     for (const gl of parts.glyphs) setAttr(gl.text, 'fill', fill);
     for (const d of parts.dots) setAttr(d, 'fill', '#00C853');
 
-    /* --- processing ring -> tick --------------------------------------
-       One continuous element. Before the readout finishes only the dash
-       length moves; after it the stroke thickens shut and the tick draws on.
+    /* --- status indicator: arc -> check -------------------------------
+       One polyline, written once a frame. Each point sits on the circle at
+       `sweep` of the way round, then eases to the matching point of the
+       check as the morph runs. At morph 0 that is exactly the arc; at 1 it
+       is exactly the check; in between it is the same stroke on its way
+       from one to the other. */
+    {
+      const m = status.morph;
+      const span = status.sweep * TAU;
+      let d = '';
+      for (let i = 0; i < MORPH_PTS; i++) {
+        const a = -Math.PI / 2 + (i / (MORPH_PTS - 1)) * span;
+        const cx = Math.cos(a) * RING_R;
+        const cy = Math.sin(a) * RING_R;
+        const x = PIVOT_X + (m ? cx + (TICK_PTS[i][0] - cx) * m : cx);
+        const y = RING_CY + (m ? cy + (TICK_PTS[i][1] - cy) * m : cy);
+        d += `${x.toFixed(2)},${y.toFixed(2)} `;
+      }
+      setAttr(parts.ringArc, 'points', d.trim());
+      setAttr(parts.ringArc, 'stroke-width',
+        (RING_W + (TICK_W - RING_W) * m).toFixed(3));
+      setAttr(parts.ringTrack, 'opacity', status.track.toFixed(3));
 
-       BOTH branches write EVERY attribute they share. An earlier version
-       only wrote the morph attributes inside the morph branch, which made
-       the indicator depend on which frames had already been drawn: scrubbing
-       back from the finished tick left a filled disc sitting over the
-       loading ring. Writing both sides unconditionally is what makes this a
-       function of t rather than of history. */
-    if (t < T_COUNT_END) {
-      // Only a lower clamp. An upper one would stop the arc short of closed,
-      // and closing is exactly what the morph has to start from.
-      const lit = Math.max(RING_C * ring.arc, RING_W);
-      setAttr(parts.ringArc, 'stroke-dasharray',
-        `${lit.toFixed(3)} ${Math.max(RING_C - lit, 0).toFixed(3)}`);
-      setAttr(parts.ringArc, 'r', RING_R.toFixed(3));
-      setAttr(parts.ringArc, 'stroke-width', RING_W.toFixed(3));
-      setAttr(parts.ringArc, 'stroke', RING_GREEN);
-      setAttr(parts.ringTrack, 'opacity', '1');
-      setAttr(parts.ringHalo, 'opacity', '0');
-      setAttr(parts.ringRim, 'opacity', '0');
-      setAttr(parts.ringTick, 'opacity', '0');
-      setAttr(parts.ringTick, 'stroke-dasharray', `0 ${(DONE_TICK_LEN + 1).toFixed(3)}`);
-    } else {
-      // The circle is closed now, so a dash could only chip a gap back into it.
-      //
-      // Written as "none" through setAttr rather than removed. setAttr caches
-      // the last value it wrote; a bare removeAttribute goes behind that
-      // cache, so the next setAttr of the same value is skipped as a no-op
-      // and the attribute stays gone. That is how scrubbing back from the
-      // tick left the ring with no dash at all.
-      setAttr(parts.ringArc, 'stroke-dasharray', 'none');
-      setAttr(parts.ringArc, 'r', done.r.toFixed(3));
-      setAttr(parts.ringArc, 'stroke-width', done.w.toFixed(3));
-      setAttr(parts.ringArc, 'stroke', mixHex(RING_GREEN, DONE_GREEN, done.green));
-      setAttr(parts.ringTrack, 'opacity', done.track.toFixed(3));
-      setAttr(parts.ringHalo, 'opacity', done.halo.toFixed(3));
-      setAttr(parts.ringRim, 'opacity', done.rim.toFixed(3));
-      setAttr(parts.ringTick, 'opacity', done.tick.toFixed(3));
-      setAttr(parts.ringTick, 'stroke-dasharray',
-        `${(DONE_TICK_LEN * done.tick).toFixed(3)} ${(DONE_TICK_LEN + 1).toFixed(3)}`);
+      setAttr(parts.sparkG, 'opacity', status.spark.toFixed(3));
+      // Written EVERY frame, not only while visible. An unset x1/y1 on a
+      // <line> is 0, which is the far corner of the viewBox - the group's
+      // bounding box would stretch there and the indicator would measure as
+      // a wide rectangle instead of a circle for the whole of the fall.
+      // Eased out from the disc, so they extend rather than switch on.
+      const k = 0.55 + 0.45 * status.spark;
+      for (let i = 0; i < parts.sparks.length; i++) {
+        const [p0, p1] = STATUS_SPARKS[i];
+        setAttr(parts.sparks[i], 'x1', (PIVOT_X + p0[0] * k).toFixed(2));
+        setAttr(parts.sparks[i], 'y1', (RING_CY + p0[1] * k).toFixed(2));
+        setAttr(parts.sparks[i], 'x2', (PIVOT_X + p1[0] * k).toFixed(2));
+        setAttr(parts.sparks[i], 'y2', (RING_CY + p1[1] * k).toFixed(2));
+      }
     }
 
     /* --- impact marks ----------------------------------------------- */
@@ -1688,9 +1633,8 @@ export const GEOMETRY = {
   RING_CY,
   RING_R,
   RING_W,
-  DONE_R,
-  DONE_HALO_R,
-  RING_OUTER,
+  STATUS_D,
+  TICK_W,
   LED_X,
   LED_Y,
   SINK: BAG_REST_BOTTOM - PLATE_TOP_Y,

@@ -392,180 +392,165 @@
             // transform rather than being placed independently.
             ok('indicator lives inside the scale group',
               q(r, '.swish-loader__scale').contains(led));
-          /* ---- the indicator: ring -> tick, ONE element ----
-             Five layers in one group. The green arc and the green disc are
-             the same circle, so the tick cannot land anywhere but where the
-             ring was. Nothing is swapped out and nothing disappears. */
+          /* ---- status indicator: Processing -> Weighing -> Done ----
+             Four layers in one group: the pale disc, the grey track, ONE
+             polyline that is the arc and then the check, and the burst.
+             The arc and the check are the same element, so Done is a
+             transform of the loading ring, not a replacement for it. */
           {
             const ringG = q(r, '.swish-loader__ring');
-            l.__debug.scrub(600);          // a known loading frame to read from
+            l.__debug.scrub(600);            // a known loading frame
             const kids = [...ringG.children];
-            ok('the indicator is one group of five layers',
-              kids.length === 5 && kids[4].tagName.toLowerCase() === 'polyline',
+            ok('the indicator is one group of four layers',
+              kids.length === 4 &&
+              kids[0].tagName.toLowerCase() === 'circle' &&
+              kids[2].tagName.toLowerCase() === 'polyline' &&
+              kids[3].tagName.toLowerCase() === 'g',
               kids.map((e) => e.tagName).join(','));
-            const [halo, track, arc, rim, tick] = kids;
+            const [disc, track, arc, sparkG] = kids;
 
-            ok('the track is a full light-grey ring',
+            ok('the pale disc is behind everything, in all states',
+              disc.getAttribute('fill') === '#EDFCF3' &&
+              Math.abs(parseFloat(disc.getAttribute('r')) - G.STATUS_D) < 0.01);
+            ok('the track is a full grey ring',
               track.getAttribute('fill') === 'none' &&
               !/^#0/.test(track.getAttribute('stroke')) &&
-              !track.hasAttribute('stroke-dasharray'), track.getAttribute('stroke'));
-            ok('the arc is green, thin and round-ended',
-              arc.getAttribute('stroke') === '#02E44C' &&
+              !track.hasAttribute('stroke-dasharray'));
+            ok('the arc is green with round ends',
+              arc.getAttribute('stroke') === '#01DA5C' &&
               arc.getAttribute('fill') === 'none' &&
-              arc.getAttribute('stroke-linecap') === 'round' &&
-              parseFloat(arc.getAttribute('stroke-width')) < G.RING_R / 2);
-            ok('the ring centre is empty while it loads',
-              track.getAttribute('fill') === 'none' && arc.getAttribute('fill') === 'none');
-            ok('the ring is centred on the scale, below the body, in the stage',
-              Math.abs(parseFloat(arc.getAttribute('cx')) - G.VB_W / 2) < 0.01 &&
-              G.RING_CY - G.RING_OUTER > 392 && G.RING_CY + G.RING_OUTER < G.VB_H);
-            ok('the halo is a gradient, not a filter',
-              /^url\(/.test(halo.getAttribute('fill')) && !halo.hasAttribute('filter'));
-            ok('the tick is a white round-ended polyline',
-              tick.getAttribute('stroke') === '#FFFFFF' &&
-              tick.getAttribute('fill') === 'none' &&
-              tick.getAttribute('stroke-linecap') === 'round' &&
-              tick.getAttribute('points').trim().split(/\s+/).length === 3);
-            // Identity in the DOM, which is the claim that matters: there is
-            // no second element for the tick to be drawn on.
-            ok('the disc IS the ring - the same element, not a copy',
-              arc === ringG.children[2] && ringG.children.length === 5 &&
-              !ringG.querySelector('.swish-loader__done'));
+              arc.getAttribute('stroke-linecap') === 'round');
+            ok('the burst is four strokes',
+              sparkG.children.length === 4 &&
+              [...sparkG.children].every((e) => e.tagName.toLowerCase() === 'line'));
+            ok('the indicator is centred on the scale, below the body',
+              Math.abs(parseFloat(disc.getAttribute('cx')) - G.VB_W / 2) < 0.01 &&
+              G.RING_CY - G.STATUS_D >= 392 && G.RING_CY + G.STATUS_D <= G.VB_H,
+              `${(G.RING_CY - G.STATUS_D).toFixed(1)}..${(G.RING_CY + G.STATUS_D).toFixed(1)}`);
 
-            const at = (t) => {
+            const pts = (t) => {
               l.__debug.scrub(t);
-              const da = arc.getAttribute('stroke-dasharray');
+              return arc.getAttribute('points').trim().split(/\s+/)
+                .map((s) => s.split(',').map(Number));
+            };
+            const at = (t) => {
+              const P = pts(t);
+              const cx = G.VB_W / 2, cy = G.RING_CY;
+              // Sweep as the SUM of the steps between consecutive points, not
+              // the angle between the first and the last: a closed circle puts
+              // those two on top of each other and would measure as zero.
+              let sweep = 0;
+              for (let i = 1; i < P.length; i++) {
+                const a = Math.atan2(P[i - 1][1] - cy, P[i - 1][0] - cx);
+                const b = Math.atan2(P[i][1] - cy, P[i][0] - cx);
+                let d = b - a;
+                while (d > Math.PI) d -= Math.PI * 2;
+                while (d < -Math.PI) d += Math.PI * 2;
+                sweep += d;
+              }
+              // How far every point is from the ring's radius: 0 while it is
+              // a circle, large once it has become the check.
+              const off = P.map(([x, y]) =>
+                Math.abs(Math.hypot(x - cx, y - cy) - G.RING_R));
               return {
-                lit: !da || da === 'none' ? null : parseFloat(da.split(' ')[0]),  // null = closed
-                off: parseFloat(arc.getAttribute('stroke-dashoffset')),
-                r: parseFloat(arc.getAttribute('r')),
-                w: parseFloat(arc.getAttribute('stroke-width')),
-                halo: +halo.getAttribute('opacity'),
-                rim: +rim.getAttribute('opacity'),
-                tick: +tick.getAttribute('opacity'),
-                drawn: parseFloat(tick.getAttribute('stroke-dasharray').split(' ')[0]),
-                stroke: arc.getAttribute('stroke'),
-                track: +track.getAttribute('opacity')
+                n: P.length,
+                sweep: sweep / (Math.PI * 2),
+                onCircle: Math.max(...off) < 0.05,
+                dev: Math.max(...off),
+                track: +track.getAttribute('opacity'),
+                spark: +sparkG.getAttribute('opacity'),
+                w: parseFloat(arc.getAttribute('stroke-width'))
               };
             };
-            const C = 2 * Math.PI * G.RING_R;
 
-            /* --- phase 1: it loads, and it never leaves --- */
-            const live = [0, 150, 300, 600, 900, 1100, 1200, 1500, 1800, 2000, 2099];
-            ok('the indicator is on screen from the first frame to the last',
-              live.concat([2100, 2400, 2700]).every((t) => {
-                l.__debug.scrub(t);
-                return ringG.getAttribute('opacity') !== '0' &&
-                  ringG.getBoundingClientRect().width > 0;
-              }), 'never hidden');
-            const walk = live.map(at);
-            ok('the tail stays anchored at twelve oclock',
-              walk.every((v) => v.off === 0));
-            ok('the arc only ever grows',
-              walk.every((v, i) => i === 0 || v.lit > walk[i - 1].lit),
-              walk.map((v) => (100 * v.lit / C).toFixed(0) + '%').join(' '));
-            ok('it passes the references two states',
-              Math.abs(walk[0].lit / C - 0.24) < 0.03 &&
-              Math.abs(at(1200).lit / C - 0.57) < 0.04,
-              `t=0 ${(100 * walk[0].lit / C).toFixed(0)}% (ref 24%), settle ${(100 * at(1200).lit / C).toFixed(0)}% (ref 57%)`);
-            ok('the arc never collapses to a dot',
-              walk.every((v) => v.lit >= G.RING_W));
-            ok('the circle closes exactly as SWiSH completes',
-              at(2099).lit / C > 0.999 && at(2100).lit === null,
-              `${(100 * at(2099).lit / C).toFixed(2)}% then closed`);
-            ok('nothing of the tick shows while it is still loading',
-              live.every((t) => { const v = at(t); return v.rim === 0 && v.tick === 0 && v.halo === 0; }));
+            /* --- phase 1: Processing -> Weighing, in step with the bag --- */
+            const live = [0, 150, 300, 600, 900, 1100, 1199];
+            ok('the arc is one polyline of a fixed point count',
+              live.every((t) => at(t).n === at(0).n) && at(0).n > 40, at(0).n);
+            ok('every point is on the ring while it loads',
+              live.every((t) => at(t).onCircle),
+              `worst deviation ${Math.max(...live.map((t) => at(t).dev)).toFixed(4)}`);
+            const sweeps = live.map((t) => at(t).sweep);
+            ok('the sweep only ever grows',
+              sweeps.every((v, i) => i === 0 || v > sweeps[i - 1] - 1e-6),
+              sweeps.map((v) => (100 * v).toFixed(0) + '%').join(' '));
+
+            // Measured off the reference: 28% Processing, 65% Weighing.
+            ok('it starts on the reference Processing sweep',
+              Math.abs(at(0).sweep - 0.28) < 0.02,
+              `${(100 * at(0).sweep).toFixed(0)}% (ref 28%)`);
+            // T_SETTLE_END is the instant the bag stops moving: that is what
+            // "synchronised with the bag" has to mean, not a nearby number.
+            ok('it reaches the reference Weighing sweep as the bag settles',
+              Math.abs(at(TIMELINE.SETTLE_END).sweep - 0.65) < 0.02,
+              `${(100 * at(TIMELINE.SETTLE_END).sweep).toFixed(0)}% at ${TIMELINE.SETTLE_END}ms (ref 65%)`);
+            ok('the circle closes exactly as the readout finishes',
+              at(TIMELINE.COUNT_END - 1).sweep > 0.99,
+              `${(100 * at(TIMELINE.COUNT_END - 1).sweep).toFixed(1)}%`);
+            ok('nothing of Done shows while it is still loading',
+              live.every((t) => { const v = at(t); return v.track === 1 && v.spark === 0; }));
 
             /* --- phase 2: the morph --- */
-            const morph = [2100, 2160, 2220, 2280, 2340, 2400, 2520].map(at);
-            // Read as the stroke's two edges, which is what the shape is:
-            // the hole closes, and it only ever closes.
-            const hole = (v) => Math.max(0, v.r - v.w / 2);
-            ok('the hole closes, and only ever closes',
-              morph.every((v, i) => i === 0 || hole(v) <= hole(morph[i - 1]) + 1e-9) &&
-              hole(morph[0]) > 1 && hole(morph[morph.length - 1]) === 0,
-              morph.map((v) => hole(v).toFixed(2)).join(' '));
-            ok('the hole is shut well before the morph ends, leaving no pinhole',
-              hole(at(2320)) === 0, `${hole(at(2320)).toFixed(3)} at 2320ms`);
-            // The outer edge eases from the ring's rim to the disc's, never
-            // outward, never by more than 10%, and never in a step.
-            const edge = (v) => v.r + v.w / 2;
-            ok('the outer edge only ever eases inward, never grows',
-              morph.every((v, i) => i === 0 || edge(v) <= edge(morph[i - 1]) + 1e-9),
-              morph.map((v) => edge(v).toFixed(2)).join(' '));
-            ok('the inset is small enough to read as the same badge',
-              Math.abs(edge(morph[0]) - G.RING_OUTER) < 0.01 &&
-              Math.abs(edge(morph[morph.length - 1]) - G.DONE_R) < 0.01 &&
-              G.DONE_R / G.RING_OUTER > 0.9,
-              `${G.RING_OUTER.toFixed(2)} -> ${G.DONE_R.toFixed(2)} (${(100 * (1 - G.DONE_R / G.RING_OUTER)).toFixed(1)}% in)`);
-            // Sampled 60ms apart; at 60fps a real frame moves a quarter of
-            // this. What is being ruled out is a step, not slow motion.
-            ok('no step: no sampled frame jumps the edge',
+            const morph = [2100, 2180, 2260, 2340, 2420, 2520].map(at);
+            ok('the point count never changes through the morph',
+              morph.every((v) => v.n === at(0).n));
+            ok('the stroke starts on the circle and ends well off it',
+              morph[0].dev < 0.05 && morph[morph.length - 1].dev > G.RING_R / 2,
+              morph.map((v) => v.dev.toFixed(2)).join(' '));
+            // A morph, not a cut. Sampled 80ms apart, so a real 60fps frame
+            // moves about a fifth of what is allowed here; what this rules
+            // out is a step, not slow motion.
+            ok('no frame of the morph jumps',
               morph.every((v, i) => i === 0 ||
-                Math.abs(edge(v) - edge(morph[i - 1])) < 0.5 * (G.RING_OUTER - G.DONE_R)),
-              morph.slice(1).map((v, i) => Math.abs(edge(v) - edge(morph[i])).toFixed(3)).join(' '));
-            // The footprint the badge occupies is unchanged: the halo takes
-            // up exactly what the disc gives back.
-            ok('the halo matches the reference ratio and fills the band',
-              Math.abs(G.DONE_HALO_R / G.DONE_R - 1.24) < 0.01 &&
-              G.DONE_HALO_R === G.VB_H - G.RING_CY,
-              `halo/disc ${(G.DONE_HALO_R / G.DONE_R).toFixed(3)}`);
-            // The disc must keep covering the centre at every point.
-            const closedTrack = [2340, 2400, 2520, 2700].map(at);
-            // The fill completes halfway through the morph; from there the
-            // stroke must keep covering the centre, never reopening a hole.
-            const closed = [2340, 2400, 2520, 2700].map(at);
-            ok('the disc stays closed once it has filled',
-              closed.every((v) => Math.abs(v.r - v.w / 2) < 0.01),
-              closed.map((v) => (v.r - v.w / 2).toFixed(3)).join(' '));
-            ok('the tick draws on rather than appearing at once',
-              morph.every((v, i) => i === 0 || v.drawn >= morph[i - 1].drawn) &&
-              morph[0].drawn === 0 && morph[morph.length - 1].drawn > 0,
-              morph.map((v) => v.drawn.toFixed(1)).join(' '));
-            ok('rim and halo fade in, never snap',
-              morph.every((v, i) => i === 0 ||
-                (v.rim >= morph[i - 1].rim && v.halo >= morph[i - 1].halo)));
-            // The disc is closed when the stroke's INNER edge reaches the
-            // centre - not when r reaches 0, which would stop it painting.
-            // Nothing of the loading ring may be left standing around the
-            // finished badge.
-            ok('the grey track is gone by the time the disc has filled',
-              closedTrack.every((v) => v.track === 0) &&
-              at(0).track === 1 && at(2000).track === 1,
-              closedTrack.map((v) => v.track).join(' '));
-            ok('the morph is finished and settled by the hold',
-              at(2700).tick === 1 && at(2700).rim === 1 &&
-              Math.abs(at(2700).r - at(2700).w / 2) < 0.01,
-              `inner edge ${(at(2700).r - at(2700).w / 2).toFixed(3)}`);
-            ok('the disc never stops painting: r stays above zero',
-              morph.concat([at(2700)]).every((v) => v.r > 0.5),
-              `min r ${Math.min(...morph.map((v) => v.r), at(2700).r).toFixed(3)}`);
-            ok('the disc deepens to the reference green',
-              at(2700).stroke === '#01c334', at(2700).stroke);
+                Math.abs(v.dev - morph[i - 1].dev) < 0.6 * G.RING_R),
+              morph.slice(1).map((v, i) => Math.abs(v.dev - morph[i].dev).toFixed(2)).join(' '));
+            ok('the track fades out, never snaps',
+              morph.every((v, i) => i === 0 || v.track <= morph[i - 1].track) &&
+              morph[morph.length - 1].track === 0,
+              morph.map((v) => v.track).join(' '));
+            ok('the burst eases in on the tail, never snaps',
+              morph.every((v, i) => i === 0 || v.spark >= morph[i - 1].spark) &&
+              morph[0].spark === 0 && morph[morph.length - 1].spark === 1,
+              morph.map((v) => v.spark).join(' '));
+            ok('the stroke width eases from the arc to the tick',
+              Math.abs(morph[0].w - G.RING_W) < 0.01 &&
+              Math.abs(morph[morph.length - 1].w - G.TICK_W) < 0.01,
+              `${morph[0].w} -> ${morph[morph.length - 1].w}`);
 
-            /* --- it is ONE element: size and centre hold across the morph --- */
+            // It ends ON the reference's check, not merely near one.
             {
-              // Across the WHOLE life of the indicator, loading and morph
-              // alike, the outer edge and the centre are fixed.
-              const span = [];
-              for (let t = 0; t <= 2700; t += 30) span.push(at(t));
-              ok('the indicator keeps its size from ring to tick',
-                span.every((v) => {
-                  const e = v.r + v.w / 2;
-                  return e <= G.RING_OUTER + 0.01 && e >= G.DONE_R - 0.01;
-                }),
-                `edge ${Math.min(...span.map((v) => v.r + v.w / 2)).toFixed(3)}..${Math.max(...span.map((v) => v.r + v.w / 2)).toFixed(3)} within ${G.DONE_R.toFixed(2)}..${G.RING_OUTER.toFixed(2)}`);
-              const cx0 = arc.getAttribute('cx'), cy0 = arc.getAttribute('cy');
+              const P = pts(2520);
+              const cx = G.VB_W / 2, cy = G.RING_CY;
+              const xs = P.map((p) => (p[0] - cx) / G.STATUS_D);
+              const ys = P.map((p) => (p[1] - cy) / G.STATUS_D);
+              ok('the finished shape is the reference check mark',
+                Math.abs(Math.min(...xs) - -0.50) < 0.02 &&
+                Math.abs(Math.max(...xs) - 0.44) < 0.02 &&
+                Math.abs(Math.min(...ys) - -0.25) < 0.02 &&
+                Math.abs(Math.max(...ys) - 0.33) < 0.02,
+                `x ${Math.min(...xs).toFixed(2)}..${Math.max(...xs).toFixed(2)} ` +
+                `y ${Math.min(...ys).toFixed(2)}..${Math.max(...ys).toFixed(2)}`);
+            }
+
+            /* --- it never disappears, and never moves --- */
+            {
+              const bad = [];
+              for (let t = 0; t <= 2700; t += 25) {
+                l.__debug.scrub(t);
+                const b = arc.getBoundingClientRect();
+                if (!(b.width > 0 && b.height > 0)) bad.push(t);
+              }
+              ok('the green stroke is on screen at every single frame',
+                bad.length === 0,
+                bad.length ? `absent at ${bad.slice(0, 5).join(',')}ms` : 'never absent');
+            }
+            {
+              const dcx = disc.getAttribute('cx'), dcy = disc.getAttribute('cy');
               ok('the indicator never moves',
                 [0, 600, 1200, 2100, 2400, 2700].every((t) => {
                   l.__debug.scrub(t);
-                  return arc.getAttribute('cx') === cx0 && arc.getAttribute('cy') === cy0;
-                }), `${cx0},${cy0}`);
-              l.__debug.scrub(2250);
-              const mid = ringG.getBoundingClientRect();
-              ok('it stays circular mid-morph',
-                Math.abs(mid.width - mid.height) / mid.width < 0.03,
-                `${mid.width.toFixed(2)} x ${mid.height.toFixed(2)}`);
+                  return disc.getAttribute('cx') === dcx && disc.getAttribute('cy') === dcy;
+                }));
             }
 
             /* --- exception paths --- */
@@ -574,59 +559,63 @@
               const bad = [];
               for (let t = 0; t <= 2700; t += 25) {
                 l.__debug.scrub(t);
-                const bb = ringG.getBoundingClientRect();
-                if (bb.bottom > svgB.bottom + 0.5 || bb.top < svgB.top - 0.5 ||
-                    bb.left < svgB.left - 0.5 || bb.right > svgB.right + 0.5) bad.push(t);
+                const b = ringG.getBoundingClientRect();
+                if (b.bottom > svgB.bottom + 0.5 || b.top < svgB.top - 0.5 ||
+                    b.left < svgB.left - 0.5 || b.right > svgB.right + 0.5) bad.push(t);
               }
-              ok('never clipped by the stage, halo included', bad.length === 0,
+              ok('never clipped by the stage, burst included', bad.length === 0,
                 bad.length ? `clipped at ${bad.slice(0, 5).join(',')}ms` : 'inside at every frame');
-              ok('the halo cannot reach the edge visibly',
-                G.DONE_HALO_R <= G.VB_H - G.RING_CY,
-                `${G.DONE_HALO_R.toFixed(2)} of ${(G.VB_H - G.RING_CY).toFixed(2)}`);
+              ok('the disc fits the band under the scale by construction',
+                G.STATUS_D <= G.VB_H - G.RING_CY);
             }
             {
               l.__debug.scrub(2400);
-              const wRest = ringG.getBoundingClientRect().width;
+              const w = disc.getBoundingClientRect().width;
               l.__debug.scrub(620);
               ok('it does not squash with the plate',
-                Math.abs(ringG.getBoundingClientRect().width - wRest) < 0.01);
+                Math.abs(disc.getBoundingClientRect().width - w) < 0.01);
+            }
+            {
+              l.__debug.scrub(2250);
+              const b = disc.getBoundingClientRect();
+              ok('the disc stays circular mid-morph',
+                Math.abs(b.width - b.height) / b.width < 0.03,
+                `${b.width.toFixed(2)} x ${b.height.toFixed(2)}`);
             }
             {
               const d = await make({ loop: true });
               d.__debug.setDegraded();
               const dg = q(d.root, '.swish-loader__ring');
+              const span = (t) => {
+                d.__debug.scrub(t);
+                const P = dg.children[2].getAttribute('points').trim().split(/\s+/);
+                return P.length;
+              };
               d.__debug.scrub(300);
-              const a1 = parseFloat(dg.children[2].getAttribute('stroke-dasharray').split(' ')[0]);
+              const s1 = dg.children[2].getAttribute('points');
               d.__debug.scrub(900);
-              const a2 = parseFloat(dg.children[2].getAttribute('stroke-dasharray').split(' ')[0]);
-              d.__debug.scrub(2700);
-              ok('it survives degraded mode and still completes',
-                a2 > a1 && +dg.children[4].getAttribute('opacity') === 1 &&
-                ![...dg.querySelectorAll('*')].some((e) => e.hasAttribute('filter')),
-                `${a1.toFixed(1)} -> ${a2.toFixed(1)}`);
+              ok('it survives degraded mode and still advances',
+                span(900) > 0 && dg.children[2].getAttribute('points') !== s1 &&
+                ![...dg.querySelectorAll('*')].some((e) => e.hasAttribute('filter')));
               d.destroy();
             }
             {
               const rm = await make({ loop: false, reducedMotion: true });
               const rg = q(rm.root, '.swish-loader__ring');
-              const ra = rg.children[2];
-              ok('the reduced-motion still shows the completed tick',
-                +rg.children[4].getAttribute('opacity') === 1 &&
-                Math.abs(parseFloat(ra.getAttribute('r')) -
-                  parseFloat(ra.getAttribute('stroke-width')) / 2) < 0.01,
-                `tick ${rg.children[4].getAttribute('opacity')}, r ${ra.getAttribute('r')}`);
+              ok('the reduced-motion still shows the finished check and burst',
+                +rg.children[3].getAttribute('opacity') === 1 &&
+                +rg.children[1].getAttribute('opacity') === 0,
+                `burst ${rg.children[3].getAttribute('opacity')}, track ${rg.children[1].getAttribute('opacity')}`);
               rm.destroy();
             }
+            /* --- pure in t, and free of history --- */
             const z1 = at(2200), z2 = at(2400), z3 = at(2200);
             ok('the indicator is a pure function of t',
-              z1.drawn === z3.drawn && z1.r === z3.r && z1.drawn !== z2.drawn);
-            // Arriving at a loading frame FROM the finished tick must give
-            // the same thing as arriving at it from the start.
-            at(0); const fwd = at(600);
-            at(2700); const back = at(600);
-            ok('scrubbing back from the tick restores the ring exactly',
-              JSON.stringify(fwd) === JSON.stringify(back),
-              `${JSON.stringify(back)}`);
+              z1.dev === z3.dev && z1.dev !== z2.dev);
+            at(0); const fwd = JSON.stringify(at(600));
+            at(2700); const back = JSON.stringify(at(600));
+            ok('scrubbing back from the check restores the ring exactly',
+              fwd === back, back);
           }
 
           /* ---- the display panel: WIDER, and only wider ----
