@@ -523,9 +523,175 @@ const REVEAL_MS = 90;
  * text the reader has already started reading is worse than one whose lit
  * run sits a little right of centre, so the block is now pinned.
  */
-const CELL_W = 14.5 * U;
-const FONT_SIZE = 21 * U;
+/* =====================================================================
+ * SIXTEEN-SEGMENT READOUT
+ *
+ * The glyphs are DRAWN, not typeset. There is no font file and no font
+ * stack, which is the whole point:
+ *
+ *   - A webfont has to load. This is a LOADING screen, so the one moment it
+ *     is guaranteed not to be cached is the moment it is needed, and the
+ *     fallback is exactly the generic monospace this replaces. There is no
+ *     FOUT here because there is no font.
+ *   - The CSS already named "DSEG14 Classic" at the front of its stack and
+ *     nothing ever loaded it, so every render had silently been the
+ *     fallback. Drawing the segments makes that class of failure impossible
+ *     rather than merely unlikely.
+ *   - Segments scale as geometry. They are crisp at any size and any DPR,
+ *     with no hinting and no rasterised glyph cache to go soft.
+ *
+ * Proportions are measured off the reference display: segment thickness is
+ * 0.13 of the glyph height, and the glyph box is about 0.70 as wide as it is
+ * tall. Lit colour is sampled from it too - the body reads #24CA9C and blows
+ * out to #41FAD4 at the core, so the fill is the mint between them and the
+ * glow supplies the bloom.
+ *
+ * Layout, the standard starburst:
+ *
+ *       A1   A2
+ *      ---- ----
+ *     |\   |   /|
+ *     F H  I  J B
+ *     |  \ | /  |
+ *      -G1- -G2-
+ *     |  / | \  |
+ *     E K  L  M C
+ *     |/   |   \|
+ *      ---- ----
+ *       D1   D2
+ *
+ * S, W, i and H need only the orthogonal segments; the four diagonals are
+ * drawn unlit, because a segment display that shows its dark segments is
+ * what makes it read as hardware rather than as text.
+ * ===================================================================== */
+
+/** Lit colour, sampled from the reference. */
+const SEG_ON = '#2FE8AC';
+/**
+ * Dark segments are NOT drawn. A real panel shows them faintly and it was
+ * tempting to match that, but sixteen of them overlapping in a cell read as
+ * clutter at this size however low the opacity went - and the reference
+ * shows none: its display field is a flat #041A0D with only lit segments on
+ * it. So an unlit cell is empty, which is also what lets the placeholder
+ * pips be seen at all.
+ */
+
+const GLYPH_H = 0.60 * GLASS_H;
+const GLYPH_W = 0.76 * GLYPH_H;
+const SEG_T = 0.13 * GLYPH_H;
+/**
+ * How far each segment pulls back from the point it shares with its
+ * neighbours. The reference leaves about 0.4 of a thickness between the two
+ * centre verticals of its W, which is 0.2 from each - enough that adjoining
+ * segments read as separate pieces of hardware rather than as one bent bar,
+ * and small enough that a run like the top of S still reads as a single
+ * stroke with a seam in it.
+ */
+const SEG_GAP = 0.20 * SEG_T;
+/**
+ * How much of each corner is cut away, as a fraction of the half-thickness.
+ * 1 would mitre the end to a point; the reference leaves a short flat, so
+ * this is a little under.
+ */
+const SEG_CHAMFER = 0.62;
+const CELL_W = GLYPH_W * 1.26;
 const CELL0_CX = GLASS_CX - (GLYPHS.length * CELL_W) / 2 + CELL_W / 2;
+
+/**
+ * One segment as a flat hexagon: a bar with mitred ends, so neighbouring
+ * segments meet at a diagonal seam instead of butting into each other. That
+ * seam is the detail that reads as a segment display rather than as a set of
+ * rectangles.
+ *
+ * Coordinates are relative to the glyph box's own centre, so a cell only has
+ * to translate to its position - nothing has to know where it ended up.
+ */
+function segBar(x0, y0, x1, y1) {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.hypot(dx, dy);
+  const ux = dx / len;
+  const uy = dy / len;
+  const px = -uy;
+  const py = ux;
+  const h = SEG_T / 2;
+  const c = SEG_CHAMFER * h;
+
+  // Both ends pull back by the seam, then each of the four corners is cut
+  // at 45 degrees. An octagon, not a hexagon: mitring all the way to a
+  // point gives a long tapered tip, and the reference's segments end in a
+  // short flat with the corners knocked off. That flat is most of what
+  // separates "a segment" from "a lozenge".
+  const ax = x0 + ux * SEG_GAP;
+  const ay = y0 + uy * SEG_GAP;
+  const L = len - 2 * SEG_GAP;
+
+  // Local (along, across) -> stage.
+  const at = (along, across) => [
+    ax + ux * along + px * across,
+    ay + uy * along + py * across
+  ];
+  return [
+    at(c, -h), at(L - c, -h), at(L, -h + c), at(L, h - c),
+    at(L - c, h), at(c, h), at(0, h - c), at(0, -h + c)
+  ];
+}
+
+/** A square pip, for the tittle on "i" and for the placeholder. */
+function segDot(cx, cy) {
+  const h = SEG_T / 2;
+  return [[cx - h, cy - h], [cx + h, cy - h], [cx + h, cy + h], [cx - h, cy + h]];
+}
+
+const SEGMENTS = (() => {
+  const w = GLYPH_W / 2;
+  const h = GLYPH_H / 2;
+  const t = SEG_T / 2;
+  const xL = -w + t;
+  const xR = w - t;
+  const yT = -h + t;
+  const yB = h - t;
+  return {
+    A1: segBar(xL, yT, 0, yT),
+    A2: segBar(0, yT, xR, yT),
+    G1: segBar(xL, 0, 0, 0),
+    G2: segBar(0, 0, xR, 0),
+    D1: segBar(xL, yB, 0, yB),
+    D2: segBar(0, yB, xR, yB),
+    F: segBar(xL, yT, xL, 0),
+    E: segBar(xL, 0, xL, yB),
+    B: segBar(xR, yT, xR, 0),
+    C: segBar(xR, 0, xR, yB),
+    I: segBar(0, yT, 0, 0),
+    L: segBar(0, 0, 0, yB),
+    H: segBar(xL, yT, 0, 0),
+    J: segBar(xR, yT, 0, 0),
+    K: segBar(xL, yB, 0, 0),
+    M: segBar(xR, yB, 0, 0),
+    DOT_HI: segDot(0, yT),
+    DOT_LO: segDot(0, yB)
+  };
+})();
+
+/**
+ * Which segments each character lights, read off the reference:
+ *
+ *   S  the classic shape - top, upper-left, middle, lower-right, bottom
+ *   W  two joined U's, which is how a segment display spells W: both outer
+ *      verticals, both centre verticals, and a split bottom
+ *   i  the lower centre vertical with a tittle above it
+ *   H  both pairs of verticals and the middle bar
+ */
+const SEG_MAP = {
+  S: ['A1', 'A2', 'F', 'G1', 'G2', 'C', 'D1', 'D2'],
+  W: ['F', 'E', 'B', 'C', 'I', 'L', 'D1', 'D2'],
+  i: ['L', 'DOT_HI'],
+  H: ['F', 'E', 'B', 'C', 'G1', 'G2'],
+  '.': ['DOT_LO']
+};
+
+/** `points` for a <polygon>, from a list of [x, y]. */
+const segPoints = (pts) => pts.map(([x, y]) => `${x.toFixed(3)},${y.toFixed(3)}`).join(' ');
 
 /* =====================================================================
  * 3. EASING
@@ -917,6 +1083,33 @@ function buildStage() {
   gf.appendChild(merge);
   defs.appendChild(gf);
 
+  /**
+   * The readout's bloom. ONE blur pass, merged UNDER the untouched source,
+   * so what the eye lands on is still the crisp segment and the blur only
+   * puts a halo around it.
+   *
+   * That ordering is the whole difference. The display group used to carry a
+   * filter whose blurred copy was merged TWICE and the type was read through
+   * it, which is what made the lettering look doubled and soft. Here the
+   * source paints last and at full strength, so segment edges stay exactly
+   * as sharp as the geometry.
+   *
+   * stdDeviation is in USER UNITS, so the bloom scales with the artwork. A
+   * CSS blur would not, and would be wrong at every size but one.
+   */
+  const rf = el('filter', {
+    id: `${id}-readout`,
+    x: '-40%', y: '-80%', width: '180%', height: '260%'
+  });
+  rf.appendChild(el('feGaussianBlur', {
+    stdDeviation: (SEG_T * 0.62).toFixed(3), result: 'bloom'
+  }));
+  const rm = el('feMerge', {});
+  rm.appendChild(el('feMergeNode', { in: 'bloom' }));
+  rm.appendChild(el('feMergeNode', { in: 'SourceGraphic' }));
+  rf.appendChild(rm);
+  defs.appendChild(rf);
+
   // Glass fill. The baked panel is not flat - it is ~#111 at the left,
   // #131313 across the middle and lifts toward #2a2a2a at its right end, a
   // faint sheen off the bezel. Sampled from the raster and reproduced so the
@@ -1114,49 +1307,56 @@ function buildStage() {
 
   // Groups the readout only; it carries no transform and must not acquire
   // one. Anything applied here moves letters that are already on screen.
-  const blockG = el('g', {});
+  const blockG = el('g', { class: 'swish-loader__readout' });
+
+  const litLayer = el('g', {
+    class: 'swish-loader__seg-on', filter: `url(#${id}-readout)`
+  });
+  blockG.appendChild(litLayer);
+
+  /**
+   * One cell per character position, each a complete 16-segment digit.
+   *
+   * Three layers, so a frame costs two attribute writes per cell rather
+   * than eighteen:
+   *
+   *   off    every segment, drawn once at a constant low opacity and never
+   *          touched again - the dark segments of an idle display
+   *   on     only the segments this cell's letter lights
+   *   dot    the placeholder pip
+   *
+   * The lit layers sit ON TOP of the unlit one, so neither needs to know
+   * what the other is doing and a half-revealed letter is simply a dim
+   * letter over its own dark segments, which is how real hardware fades.
+   */
   const glyphs = GLYPHS.map((ch, i) => {
-    const t = el('text', {
-      x: 0, y: 0,
-      'text-anchor': 'middle',
-      'dominant-baseline': 'central',
-      'font-size': FONT_SIZE,
-      class: 'swish-loader__glyph',
-      opacity: '0'
-    });
-    t.textContent = ch;
-    const g = el('g', { transform: `translate(${CELL0_CX + i * CELL_W} ${GLASS_CY})` });
-    g.appendChild(t);
-    blockG.appendChild(g);
-    return { outer: g, text: t, i };
+    const at = `translate(${(CELL0_CX + i * CELL_W).toFixed(3)} ${GLASS_CY})`;
+
+    // Fill lives on the LAYER, not on each polygon, so recolouring a glyph
+    // is one attribute write instead of eight.
+    const g = el('g', { class: 'swish-loader__cell', transform: at });
+    const on = el('g', { class: 'swish-loader__glyph', fill: SEG_ON, opacity: '0' });
+    for (const key of SEG_MAP[ch]) {
+      on.appendChild(el('polygon', { points: segPoints(SEGMENTS[key]) }));
+    }
+    g.appendChild(on);
+
+    const dot = el('g', { class: 'swish-loader__dot', fill: SEG_ON, opacity: '0' });
+    for (const key of SEG_MAP['.']) {
+      dot.appendChild(el('polygon', { points: segPoints(SEGMENTS[key]) }));
+    }
+    g.appendChild(dot);
+    litLayer.appendChild(g);
+
+    return { outer: g, text: on, dot, i };
   });
 
   /**
-   * One placeholder dot per cell, on the same x as the letter it waits for.
-   *
-   * They are appended AFTER all five letter cells rather than interleaved
-   * with them, which keeps the letters at text indices 0..4 for anything
-   * walking the DOM, and keeps them out of the letters' cell groups - those
-   * take a scale() during the reveal pop, and a dot has no business popping
-   * on its way out. It only fades.
+   * The placeholder pips, in cell order. Each lives inside its own cell, so
+   * it cannot drift from the letter that replaces it: they are the same
+   * translate, not two that have to agree.
    */
-  const dotsG = el('g', {});
-  const dots = GLYPHS.map((_, i) => {
-    const d = el('text', {
-      x: 0, y: 0,
-      'text-anchor': 'middle',
-      'dominant-baseline': 'central',
-      'font-size': FONT_SIZE,
-      class: 'swish-loader__glyph',
-      opacity: '0'
-    });
-    d.textContent = '.';
-    const g = el('g', { transform: `translate(${CELL0_CX + i * CELL_W} ${GLASS_CY})` });
-    g.appendChild(d);
-    dotsG.appendChild(g);
-    return d;
-  });
-  blockG.appendChild(dotsG);
+  const dots = glyphs.map((c) => c.dot);
 
   displayG.appendChild(blockG);
   scaleG.appendChild(displayG);
@@ -1226,7 +1426,7 @@ function buildStage() {
   });
   svg.insertBefore(impactG, bagG);
 
-  return { svg, shadow, scaleG, displayG, pilot, blockG, glyphs, dots, dotsG, streakG, bagG, bagSquash, impactG, glass, ringG, ringArc, ringTrack, sparkG, sparks, lineEls, filterIds: [`${id}-led`] };
+  return { svg, shadow, scaleG, displayG, pilot, blockG, glyphs, dots, streakG, bagG, bagSquash, impactG, glass, ringG, ringArc, ringTrack, sparkG, sparks, lineEls, filterIds: [`${id}-led`] };
 }
 
 /* =====================================================================
@@ -1397,34 +1597,19 @@ export function createSwishLoader(opts = {}) {
     /* --- readout --------------------------------------------------- */
     // NOTE: parts.pilot is deliberately not touched here. See buildStage().
 
+    // A cell NEVER moves or changes size. Its transform is written once at
+    // build time and not touched again - these are segments in a panel, and
+    // the only thing that happens to them is that they light up. An earlier
+    // version eased each letter in with a small rise and scale, which is a
+    // reasonable thing to do to type and the wrong thing to do to hardware.
     for (let i = 0; i < parts.glyphs.length; i++) {
-      const p = disp.reveal[i];
-      const gl = parts.glyphs[i];
-      setAttr(gl.text, 'opacity', p.toFixed(3));
-      if (p > 0 && p < 1) {
-        const e = easeOutCubic(p);
-        const s = lerp(0.92, 1, e);
-        setAttr(
-          gl.outer,
-          'transform',
-          `translate(${(CELL0_CX + i * CELL_W).toFixed(3)} ${(GLASS_CY + 2 * (1 - e)).toFixed(3)}) ` +
-            `scale(${s.toFixed(4)})`
-        );
-      } else if (p >= 1) {
-        setAttr(gl.outer, 'transform', `translate(${(CELL0_CX + i * CELL_W).toFixed(3)} ${GLASS_CY})`);
-      }
-    }
-
-    // Each dot is pinned to its cell; only its alpha changes.
-    for (let i = 0; i < parts.dots.length; i++) {
+      setAttr(parts.glyphs[i].text, 'opacity', disp.reveal[i].toFixed(3));
       setAttr(parts.dots[i], 'opacity', disp.dots[i].toFixed(3));
     }
 
-    // Nothing to pump: the letters are flat, so the only thing that changes
-    // as each one lands is its colour.
-    const fill = disp.hot > 0.02 ? mixGreen(disp.hot) : '#00C853';
+    // The final reveal overshoots to a hotter green, as a filament would.
+    const fill = disp.hot > 0.02 ? mixGreen(disp.hot) : SEG_ON;
     for (const gl of parts.glyphs) setAttr(gl.text, 'fill', fill);
-    for (const d of parts.dots) setAttr(d, 'fill', '#00C853');
 
     /* --- status indicator: arc -> check -------------------------------
        One polyline, written once a frame. Each point sits on the circle at
@@ -1500,10 +1685,11 @@ export function createSwishLoader(opts = {}) {
   }
 
   function mixGreen(p) {
-    // #00C853 -> #3DFF8A overshoot on the final reveal only.
-    const r = Math.round(lerp(0x00, 0x3d, p));
-    const g = Math.round(lerp(0xc8, 0xff, p));
-    const b = Math.round(lerp(0x53, 0x8a, p));
+    // SEG_ON -> #6BFFD8, the blown-out core the reference shows on a lit
+    // segment, for the final reveal only.
+    const r = Math.round(lerp(0x2f, 0x6b, p));
+    const g = Math.round(lerp(0xe8, 0xff, p));
+    const b = Math.round(lerp(0xac, 0xd8, p));
     return `rgb(${r},${g},${b})`;
   }
 

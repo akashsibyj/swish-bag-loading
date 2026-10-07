@@ -52,8 +52,14 @@
             q(r, 'svg').getAttribute('aria-hidden') === 'true');
           ok('screen-reader text present',
             q(r, '.swish-loader__sr')?.textContent.trim() === 'Loading, please wait');
-          ok('display glyphs are live <text>, not a raster',
-            q(r, 'svg').querySelectorAll('text').length === 10);
+          // The readout is DRAWN, not typeset. No <text>, so no font stack and
+          // nothing to fail to load - which is how it had been silently
+          // falling back to generic monospace.
+          ok('the readout uses no text and no font',
+            q(r, 'svg').querySelectorAll('text').length === 0 &&
+            q(r, '.swish-loader__seg-on').querySelectorAll('polygon').length > 20,
+            `${q(r, 'svg').querySelectorAll('text').length} text, ` +
+            `${q(r, '.swish-loader__seg-on').querySelectorAll('polygon').length} polygons`);
           ok('exactly two raster layers (bag + scale)',
             q(r, 'svg').querySelectorAll('image').length === 2,
             q(r, 'svg').querySelectorAll('image').length);
@@ -68,7 +74,7 @@
           const l = await make({ loop: true });
           const r = l.root;
           const bag = q(r, '.swish-loader__bag');
-          const glyphs = [...q(r, 'svg').querySelectorAll('text')];
+          const glyphs = [...q(r, 'svg').querySelectorAll('.swish-loader__glyph')];
 
           l.__debug.scrub(0);
           const at0 = bag.getAttribute('transform');
@@ -891,44 +897,67 @@
               `${resting.top.toFixed(2)} -> ${squashed.top.toFixed(2)}`);
           }
 
-          /* ---- the lettering is flat ----
-             No blur, halo, offset duplicate, stroke or bevel - on the
-             glyphs themselves or on anything they hang beneath, since an
-             SVG filter applies to a whole subtree. Checked against the
-             COMPUTED style, so it catches a stylesheet reintroducing one
-             as well as an attribute. The LED is exempt: its halo is the
-             one filter the display is meant to have. */
+          /* ---- the readout is a segment display ----
+             Drawn geometry, lit per character, with a bloom that leaves the
+             segments themselves crisp. */
           {
             l.__debug.scrub(2100);
-            const disp = q(l.root, '.swish-loader__display');
-            for (let node = disp; node && node !== l.root; node = node.parentNode) {
-              ok(`no filter above the readout (<${node.tagName}>)`,
-                !node.hasAttribute('filter') &&
-                  getComputedStyle(node).filter === 'none',
-                node.getAttribute('filter') || getComputedStyle(node).filter);
+            const on = q(r, '.swish-loader__seg-on');
+            ok('lit segments carry the bloom',
+              /^url\(#.*-readout\)$/.test(on.getAttribute('filter') || ''),
+              on.getAttribute('filter'));
+
+            // The bloom must merge the UNTOUCHED source LAST. If the blurred
+            // copy painted over it, or the source were left out, the segments
+            // would be read through the blur - which is exactly how the old
+            // display filter made the lettering look doubled and soft.
+            const fid = on.getAttribute('filter').slice(5, -1);
+            const f = q(r, 'svg').querySelector('#' + fid);
+            const nodes = [...f.querySelectorAll('feMergeNode')].map((e) => e.getAttribute('in'));
+            ok('the bloom sits UNDER the crisp segments',
+              f.querySelectorAll('feGaussianBlur').length === 1 &&
+              nodes.length === 2 && nodes[nodes.length - 1] === 'SourceGraphic',
+              nodes.join(' -> '));
+
+            // Every cell is a fixed grid position and never moves or scales.
+            const cells = [...r.querySelectorAll('.swish-loader__cell')];
+            ok('there are five cells', cells.length === 5, cells.length);
+            const xf = cells.map((c) => c.getAttribute('transform'));
+            const moved = [];
+            for (const t of [1200, 1300, 1500, 1700, 1900, 2100, 2400]) {
+              l.__debug.scrub(t);
+              cells.forEach((c, i) => {
+                if (c.getAttribute('transform') !== xf[i]) moved.push(`${t}ms cell${i + 1}`);
+              });
             }
-            const flat = glyphs.every((g) => {
-              const cs = getComputedStyle(g);
-              return !g.hasAttribute('filter') && cs.filter === 'none' &&
-                (cs.textShadow === 'none' || cs.textShadow === '') &&
-                (cs.stroke === 'none' || cs.stroke === '');
-            });
-            ok('every glyph is flat: no filter, shadow or stroke', flat);
-            ok('glyphs are bold', getComputedStyle(glyphs[0]).fontWeight === '700',
-              getComputedStyle(glyphs[0]).fontWeight);
-            // A lit letter is fully opaque: no see-through, no soft edge
-            // coming from alpha rather than from the outline.
-            ok('a lit letter is fully opaque', op(glyphs[0]) === 1, op(glyphs[0]));
-            // The LED keeps its own halo, and it is the ONLY filtered node.
+            ok('no cell ever moves or resizes', moved.length === 0, moved.join(' '));
+            ok('cells are evenly pitched, left to right', (() => {
+              const x = xf.map((v) => parseFloat(v.match(/-?[\d.]+/)[0]));
+              const d = x.slice(1).map((v, i) => v - x[i]);
+              return x.every((v, i) => i === 0 || v > x[i - 1]) &&
+                Math.max(...d) - Math.min(...d) < 0.01;
+            })());
+
+            // A lit segment is fully opaque: nothing see-through.
+            l.__debug.scrub(2100);
+            ok('a lit glyph is fully opaque', op(glyphs[0]) === 1, op(glyphs[0]));
+
+            // The LED keeps its own halo, separately from the readout's.
             const ledFx = q(l.root, '.swish-loader__led');
             ok('the standby LED keeps its halo',
               /^url\(/.test(ledFx.getAttribute('filter') || ''),
               ledFx.getAttribute('filter'));
+
+            // Nothing in the stylesheet may dictate the segment colour: the
+            // renderer crossfades it, and a CSS `fill` would beat it.
+            ok('the stylesheet does not override the segment colour',
+              getComputedStyle(glyphs[0]).fill !== 'rgb(0, 200, 83)',
+              getComputedStyle(glyphs[0]).fill);
           }
 
           const shown = (t) => {
             l.__debug.scrub(t);
-            return glyphs.slice(0, 5).filter((g) => op(g) > 0.5).length;
+            return glyphs.filter((g) => op(g) > 0.5).length;
           };
           ok('t=1300 shows "S"', shown(1300) === 1, shown(1300));
           ok('t=1530 shows "SW"', shown(1530) === 2, shown(1530));
@@ -936,15 +965,16 @@
           ok('t=2100 shows "SWiSH"', shown(2100) === 5, shown(2100));
 
           /* ---- fixed five-cell readout ----
-             Cells 0..4 are the letters, 5..9 the placeholder dot that waits
-             in each. Reading whichever of the pair is lit gives the literal
-             display, which is what the sequence is actually specified in. */
+             Each cell holds its letter's lit segments and a placeholder pip.
+             Reading whichever is lit gives the literal display, which is
+             what the sequence is actually specified in. */
+          const WORD = 'SWiSH';
+          const pips = [...r.querySelectorAll('.swish-loader__dot')];
           const readout = (t) => {
             l.__debug.scrub(t);
             let s = '';
             for (let i = 0; i < 5; i++) {
-              const lit = op(glyphs[i]), dot = op(glyphs[i + 5]);
-              s += lit > 0.5 ? glyphs[i].textContent : dot > 0.5 ? '.' : ' ';
+              s += op(glyphs[i]) > 0.5 ? WORD[i] : op(pips[i]) > 0.5 ? '.' : ' ';
             }
             return s;
           };
@@ -958,17 +988,15 @@
           ok('display is blank before the count', readout(1000) === '     ',
             `"${readout(1000)}"`);
 
-          // Each cell's dot and letter must sit on the SAME spot - that is
-          // what makes a letter replace its dot rather than land beside it.
+          // A letter and its pip are in the SAME cell group, so they cannot
+          // sit anywhere but on top of each other - this checks that the
+          // structure really is that, rather than two things kept in step.
           {
-            const xy = (e) => (e.parentNode.getAttribute('transform')
-              .match(/-?[\d.]+/g) || []).map(Number);
             const off = [];
             for (let i = 0; i < 5; i++) {
-              const a = xy(glyphs[i]), b = xy(glyphs[i + 5]);
-              if (Math.abs(a[0] - b[0]) > 0.005) off.push(i + 1);
+              if (glyphs[i].parentNode !== pips[i].parentNode) off.push(i + 1);
             }
-            ok('every letter sits exactly on its dot',
+            ok('every letter shares its cell with its own pip',
               off.length === 0, `cells ${off.join(',')} differ`);
           }
 
@@ -978,7 +1006,7 @@
             for (const t of [1200, 1300, 1500, 1700, 1900, 2100]) {
               l.__debug.scrub(t);
               for (let i = 0; i < 5; i++) {
-                if (op(glyphs[i]) + op(glyphs[i + 5]) < 0.98) bad.push(`${t}ms cell${i + 1}`);
+                if (op(glyphs[i]) + op(pips[i]) < 0.98) bad.push(`${t}ms cell${i + 1}`);
               }
             }
             ok('each cell always holds exactly one mark',
@@ -1236,7 +1264,7 @@
         /* ---------- 3. reduced motion ---------- */
         {
           const l = await make({ reducedMotion: true });
-          const glyphs = [...q(l.root, 'svg').querySelectorAll('text')];
+          const glyphs = [...q(l.root, 'svg').querySelectorAll('.swish-loader__glyph')];
           ok('reduced motion renders the final state',
             glyphs.slice(0, 5).every((g) => op(g) > 0.9));
           ok('reduced motion runs no rAF loop',

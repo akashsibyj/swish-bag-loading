@@ -87,32 +87,23 @@
 }
 
 /* --- digital readout -------------------------------------------------
-   Monospace by necessity: the glyph grid in the JS assumes a fixed advance
-   width, so a proportional fallback would drift. Drop in a real dot-matrix
-   face (DSEG, Digital-7) at the FRONT of this stack for exact fidelity -
-   nothing else needs to change. */
-.swish-loader__glyph {
-  font-family: "DSEG14 Classic", "Digital-7", ui-monospace, "SF Mono", "Cascadia Mono",
-    Menlo, Consolas, "Liberation Mono", monospace;
-  font-weight: 700;
-  letter-spacing: 0;
-  fill: var(--swish-green);
+   THERE IS NO FONT HERE ANY MORE. The glyphs are drawn as sixteen-segment
+   geometry in the JS, so this rule carries no font-family, no weight and no
+   letter-spacing - and, importantly, no `fill`.
 
-  /* FLAT TYPOGRAPHY, DELIBERATELY. The letters are solid fill and nothing
-     else: no blur, no halo, no offset duplicate, no stroke, no bevel. The
-     group above them carries no SVG filter either (see -led in the JS: the
-     halo belongs to the standby LED alone), so these declarations are a
-     guard against one being reintroduced here rather than the mechanism.
+   A `fill` here is what this rule used to get wrong. It set
+   `var(--swish-green)`, and a CSS declaration beats the presentation
+   attribute the renderer writes, so every segment came out in the old
+   display green no matter what the JS asked for. Colour belongs to the
+   renderer, which crossfades it on the final reveal; the stylesheet must
+   not have an opinion.
 
-     Flat is also what keeps it sharp everywhere. A filtered SVG subtree is
-     rasterised into an offscreen buffer whose resolution is fixed at paint
-     time, which is what softens type on a high-DPR phone or under browser
-     zoom; an unfiltered glyph is scan-converted at the device's own
-     resolution at every scale. */
-  filter: none;
-  text-shadow: none;
-  stroke: none;
-  paint-order: fill;
+   This rule also used to name "DSEG14 Classic" at the front of a font
+   stack. Nothing ever loaded that face, so the readout had silently been
+   the generic monospace fallback for its whole life. Drawing the segments
+   is what makes that unfixable-by-accident. */
+.swish-loader__glyph,
+.swish-loader__dot {
   /* The readout is painted, never selected or hit-tested. */
   user-select: none;
   pointer-events: none;
@@ -245,7 +236,8 @@
     forced-color-adjust: none;
   }
 
-  .swish-loader__glyph {
+  .swish-loader__glyph,
+  .swish-loader__dot {
     fill: CanvasText;
   }
 
