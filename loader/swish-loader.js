@@ -508,9 +508,9 @@ const REVEAL_AT = GLYPHS.map((_, i) => T_COUNT_START + i * T_STEP);
 const REVEAL_MS = 90;
 
 /**
- * Monospace cell grid. Cell i is fixed at CELL0_CX + i * CELL_W and never
- * moves, so the readout types left-to-right: the "S" lands on cell 0 and
- * stays there while W, i, S, H fill the cells to its right.
+ * Fixed cell grid. Cell i is fixed at CELL_CX[i] and never moves, so the
+ * readout types left-to-right: the "S" lands on cell 0 and stays there while
+ * W, i, S, H fill the cells to its right.
  *
  * The grid is laid out so the finished "SWiSH" is optically centred in the
  * glass, which fixes where cell 0 - and therefore the left edge of every
@@ -594,8 +594,38 @@ const SEG_GAP = 0.20 * SEG_T;
  * this is a little under.
  */
 const SEG_CHAMFER = 0.62;
-const CELL_W = GLYPH_W * 1.26;
-const CELL0_CX = GLASS_CX - (GLYPHS.length * CELL_W) / 2 + CELL_W / 2;
+/**
+ * The grid is PROPORTIONAL, not monospaced - a constant gap between glyphs
+ * rather than a constant pitch.
+ *
+ * That is what the reference does, and it is the only way "i" sits inside
+ * the word. On a uniform grid a letter that is one segment wide gets a full
+ * cell anyway, so it ends up with most of a cell of air on each side and the
+ * word reads as "SW i SH". Measured off the reference: its gap holds at
+ * 0.20-0.24 of the glyph height between every pair, while its pitches swing
+ * from 63.5 to 95 - and its "i" is 0.19 of the height wide against 0.69 for
+ * the rest.
+ *
+ * THE GRID IS STILL FIXED. Every cell's position is computed once here, from
+ * the word alone, and nothing at runtime moves a cell. A letter still lands
+ * exactly where its own placeholder pip was waiting, because the pip is in
+ * that cell; the cells are simply not all the same width.
+ */
+const LETTER_GAP = 0.22 * GLYPH_H;
+/** A glyph's own ink width: "i" is a single stem, the rest fill the box. */
+const CELL_INK = GLYPHS.map((ch) => (ch === 'i' ? SEG_T : GLYPH_W));
+/** Cell centres, laid out left to right and centred as a block. */
+const CELL_CX = (() => {
+  const total = CELL_INK.reduce((a, b) => a + b, 0) +
+    LETTER_GAP * (GLYPHS.length - 1);
+  const out = [];
+  let x = GLASS_CX - total / 2;
+  for (const w of CELL_INK) {
+    out.push(x + w / 2);
+    x += w + LETTER_GAP;
+  }
+  return out;
+})();
 
 /**
  * One segment as a flat hexagon: a bar with mitred ends, so neighbouring
@@ -1330,7 +1360,7 @@ function buildStage() {
    * letter over its own dark segments, which is how real hardware fades.
    */
   const glyphs = GLYPHS.map((ch, i) => {
-    const at = `translate(${(CELL0_CX + i * CELL_W).toFixed(3)} ${GLASS_CY})`;
+    const at = `translate(${CELL_CX[i].toFixed(3)} ${GLASS_CY})`;
 
     // Fill lives on the LAYER, not on each polygon, so recolouring a glyph
     // is one attribute write instead of eight.

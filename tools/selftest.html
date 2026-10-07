@@ -931,12 +931,37 @@
               });
             }
             ok('no cell ever moves or resizes', moved.length === 0, moved.join(' '));
-            ok('cells are evenly pitched, left to right', (() => {
+            ok('cells run left to right', (() => {
               const x = xf.map((v) => parseFloat(v.match(/-?[\d.]+/)[0]));
-              const d = x.slice(1).map((v, i) => v - x[i]);
-              return x.every((v, i) => i === 0 || v > x[i - 1]) &&
-                Math.max(...d) - Math.min(...d) < 0.01;
+              return x.every((v, i) => i === 0 || v > x[i - 1]);
             })());
+
+            /* ---- the word is COMPACT ----
+               The grid is proportional, so what has to be constant is the
+               GAP between glyphs, not the pitch. On a uniform grid the "i"
+               is one segment of ink in a full-width cell and ends up with
+               most of a cell of air on each side - the word reads as
+               "SW i SH". Measured on the rendered boxes, so it tests what is
+               actually on screen rather than what the geometry intended. */
+            {
+              l.__debug.scrub(2400);
+              const box = glyphs.map((g) => g.getBoundingClientRect());
+              const gaps = box.slice(1).map((b, i) => b.left - box[i].right);
+              const lo = Math.min(...gaps), hi = Math.max(...gaps);
+              ok('every gap between glyphs is the same',
+                lo > 0 && hi - lo < 0.06 * hi,
+                gaps.map((v) => v.toFixed(2)).join('  '));
+              // The two gaps either side of the "i" are gaps 1 and 2.
+              ok('the i is no further from its neighbours than any other pair',
+                Math.max(gaps[1], gaps[2]) <= hi + 0.01,
+                `around i: ${gaps[1].toFixed(2)}, ${gaps[2].toFixed(2)}  ` +
+                `others: ${gaps[0].toFixed(2)}, ${gaps[3].toFixed(2)}`);
+              // And the whole word is tighter than a uniform grid would be.
+              const w = box[box.length - 1].right - box[0].left;
+              ok('the word is narrower than a monospaced grid would make it',
+                w < 5 * box[0].width + 4 * hi - 0.5,
+                `${w.toFixed(1)}px vs ${(5 * box[0].width + 4 * hi).toFixed(1)}px monospaced`);
+            }
 
             // A lit segment is fully opaque: nothing see-through.
             l.__debug.scrub(2100);
