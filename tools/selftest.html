@@ -487,11 +487,33 @@
             ok('the circle closes exactly as the readout finishes',
               at(TIMELINE.COUNT_END - 1).sweep > 0.99,
               `${(100 * at(TIMELINE.COUNT_END - 1).sweep).toFixed(1)}%`);
+
+            // IT MUST NOT STALL. Two separately-eased legs met with the arc
+            // momentarily stopped, which read as the ring parking itself
+            // three-quarters of the way round. The rate is sampled right
+            // across the sweep and the slowest sample has to be a real
+            // fraction of the fastest.
+            {
+              const step = 50;
+              const rates = [];
+              let prev = at(0).sweep;
+              for (let t = step; t <= TIMELINE.COUNT_END; t += step) {
+                const v = at(t).sweep;
+                rates.push(v - prev);
+                prev = v;
+              }
+              const lo = Math.min(...rates), hi = Math.max(...rates);
+              ok('the sweep never stalls on its way round',
+                lo > 0 && lo > 0.35 * hi,
+                `slowest ${(100 * lo).toFixed(2)}%/50ms vs fastest ${(100 * hi).toFixed(2)}% (ratio ${(lo / hi).toFixed(2)})`);
+              ok('the sweep is strictly increasing everywhere',
+                rates.every((v) => v > 0));
+            }
             ok('nothing of Done shows while it is still loading',
               live.every((t) => { const v = at(t); return v.track === 1 && v.spark === 0; }));
 
-            /* --- phase 2: the morph --- */
-            const morph = [2100, 2180, 2260, 2340, 2420, 2520].map(at);
+            /* --- phase 2: the morph, which must finish before the burst --- */
+            const morph = [2100, 2160, 2220, 2280, 2340, 2400, 2460].map(at);
             ok('the point count never changes through the morph',
               morph.every((v) => v.n === at(0).n));
             ok('the stroke starts on the circle and ends well off it',
@@ -508,10 +530,24 @@
               morph.every((v, i) => i === 0 || v.track <= morph[i - 1].track) &&
               morph[morph.length - 1].track === 0,
               morph.map((v) => v.track).join(' '));
-            ok('the burst eases in on the tail, never snaps',
-              morph.every((v, i) => i === 0 || v.spark >= morph[i - 1].spark) &&
-              morph[0].spark === 0 && morph[morph.length - 1].spark === 1,
+            /* --- phase 3: the burst, STRICTLY after the check --- */
+            // The ordering the reference asks for is: ring closes, then the
+            // check forms, THEN the glow. Not a late slice of the morph that
+            // happens to overlap.
+            ok('no glow anywhere while the check is still forming',
+              morph.every((v) => v.spark === 0),
               morph.map((v) => v.spark).join(' '));
+            const burst = [2460, 2500, 2560, 2620, 2700].map(at);
+            ok('the glow eases in once the check is complete, never snaps',
+              burst.every((v, i) => i === 0 || v.spark >= burst[i - 1].spark) &&
+              burst[0].spark === 0 && burst[burst.length - 1].spark === 1,
+              burst.map((v) => v.spark.toFixed(2)).join(' '));
+            ok('the check is already finished when the glow starts',
+              Math.abs(burst[0].dev - morph[morph.length - 1].dev) < 1e-6 &&
+              burst.every((v) => Math.abs(v.dev - burst[0].dev) < 1e-6),
+              'check is settled across the whole burst');
+            ok('the glow finishes before the hold fades',
+              at(TIMELINE.HOLD_END).spark === 1);
             ok('the stroke width eases from the arc to the tick',
               Math.abs(morph[0].w - G.RING_W) < 0.01 &&
               Math.abs(morph[morph.length - 1].w - G.TICK_W) < 0.01,

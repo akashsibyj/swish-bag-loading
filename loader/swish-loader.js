@@ -364,9 +364,6 @@ const T_COUNT_START = 1200;
  * at the handover and popped a separate badge in later, which is exactly the
  * "disappears and is replaced" reading this avoids.
  */
-/** How long the ring takes to become the tick, once the readout is done. */
-const T_DONE_IN = 420;
-
 // Measured off the reference: its "Processing" arc sweeps 85deg (24% of the
 // circle) and its "Weighing" arc 204deg (57%).
 const PROC_MIN = 0.28;                   // the reference's Processing sweep
@@ -382,6 +379,20 @@ const T_STEP = 202.5;
 const T_COUNT_END = 2100;
 /** Placeholder dots ramp up just before the count, so "....." is seen. */
 const T_DOTS_IN = 120;
+/**
+ * Done, in three strictly ordered beats. They do not overlap: the ring is a
+ * closed circle before the morph starts, the check is fully formed before
+ * the burst starts, and the burst is finished before the hold fades.
+ *
+ *   T_COUNT_END            ring is closed, readout reads SWiSH
+ *   + T_DONE_IN            morph: the ring folds into the check
+ *   + T_BURST_IN           burst: the glow reaches out around it
+ *                          and there is still room before T_HOLD_END
+ */
+const T_DONE_IN = 360;
+const T_BURST_IN = 160;
+const T_DONE_END = T_COUNT_END + T_DONE_IN;
+
 const T_HOLD_END = 2700;
 const T_FADE = 240;
 const T_CYCLE = 3000;
@@ -452,6 +463,8 @@ const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const easeFallCushion = (p) => p * p * (2 - p);
 const easeOutCubic = (p) => 1 - Math.pow(1 - p, 3);
 const easeInOutQuad = (p) => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2);
+const easeInOutCubic = (p) =>
+  p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
 /** Flat slope at BOTH ends - the right curve for fading something in from
  *  nothing. easeOutCubic leaves the ground at 3x, which shows as a pop. */
 const smoothstep = (p) => p * p * (3 - 2 * p);
@@ -615,6 +628,47 @@ function solveStreaks(t) {
 }
 
 /**
+ * Sweep of the progress arc, as a fraction of the circle.
+ *
+ * A MONOTONE CUBIC through three anchors - the reference's Processing sweep
+ * at t=0, its Weighing sweep as the bag settles, and a closed circle as the
+ * readout finishes. The tangent at the middle anchor is the average of the
+ * two secant slopes, which is what makes the curve C1 there.
+ *
+ * That is the whole point. An earlier version eased each leg separately with
+ * easeInOutQuad, and easeInOutQuad has ZERO derivative at both of its ends -
+ * so the two legs met with the arc momentarily stopped. It sat at 65% for
+ * about a fifth of a second and then set off again, which reads exactly as a
+ * progress ring stalling three-quarters of the way round. One curve across
+ * the whole span cannot do that: its rate is positive everywhere.
+ */
+const SWEEP_ANCHORS = [
+  [0, PROC_MIN],
+  [T_SETTLE_END, PROC_MID],
+  [T_COUNT_END, 1]
+];
+
+function sweepAt(t) {
+  const [[t0, v0], [t1, v1], [t2, v2]] = SWEEP_ANCHORS;
+  const s1 = (v1 - v0) / (t1 - t0);
+  const s2 = (v2 - v1) / (t2 - t1);
+  const m = [s1, (s1 + s2) / 2, s2];          // tangents, Fritsch-Carlson safe
+  const i = t < t1 ? 0 : 1;
+  const [ta, va, tb, vb] = i === 0 ? [t0, v0, t1, v1] : [t1, v1, t2, v2];
+  const h = tb - ta;
+  const u = clamp01((t - ta) / h);
+  const u2 = u * u;
+  const u3 = u2 * u;
+  // Cubic Hermite basis.
+  return (
+    (2 * u3 - 3 * u2 + 1) * va +
+    (u3 - 2 * u2 + u) * h * m[i] +
+    (-2 * u3 + 3 * u2) * vb +
+    (u3 - u2) * h * m[i + 1]
+  );
+}
+
+/**
  * Status indicator: Processing -> Weighing -> Done, as one function of t.
  *
  * SYNCHRONISED WITH THE BAG BY CONSTRUCTION, not by matching numbers. The
@@ -627,28 +681,20 @@ function solveStreaks(t) {
  * Returns fractions only; the renderer owns the geometry.
  */
 function solveStatus(t) {
-  // Eased, not linear: a progress ring advancing at a dead constant rate
-  // reads as a clock rather than as work being done.
-  const sweep =
-    t < T_SETTLE_END
-      ? PROC_MIN + (PROC_MID - PROC_MIN) * easeInOutQuad(clamp01(t / T_SETTLE_END))
-      : PROC_MID + (1 - PROC_MID) *
-          easeInOutQuad(clamp01((t - T_SETTLE_END) / (T_COUNT_END - T_SETTLE_END)));
-
-  // 0 = still a ring, 1 = fully the check. Every part of the Done state is a
-  // phase of this one number, so nothing can get out of step with anything
-  // else and scrubbing backwards unwinds it exactly.
-  const p = easeInOutQuad(clamp01((t - T_COUNT_END) / T_DONE_IN));
+  // 0 = still a ring, 1 = fully the check.
+  const morph = easeInOutCubic(clamp01((t - T_COUNT_END) / T_DONE_IN));
 
   return {
-    sweep,
-    morph: p,
+    sweep: sweepAt(t),
+    morph,
     // The track goes as the ring stops being a ring. Gone by the halfway
     // point, so no grey hoop is left standing where the circle used to be.
-    track: 1 - clamp01(p / 0.5),
-    // The burst arrives on the tail of the morph and eases out from the disc
-    // rather than appearing at full reach.
-    spark: clamp01((p - 0.55) / 0.45)
+    track: 1 - clamp01(morph / 0.5),
+    // STRICTLY AFTER the morph, never alongside it. Gated on the clock rather
+    // than on a late slice of `morph`, so "the glow comes after the check" is
+    // a property of the timeline and not of an easing curve that someone
+    // could later retune into an overlap.
+    spark: easeOutCubic(clamp01((t - T_DONE_END) / T_BURST_IN))
   };
 }
 
@@ -1413,10 +1459,11 @@ export function createSwishLoader(opts = {}) {
 
   /* ---- static (reduced-motion / degraded-to-still) state ----------- */
   function renderStatic() {
-    // Past the badge's pop, not at the instant the count ends: the still is
-    // meant to be the FINISHED state, and at T_COUNT_END the badge has not
-    // arrived yet. Nothing else moves between the two.
-    render(T_COUNT_END + T_DONE_IN, 1);
+    // Past the LAST beat, not at the instant the count ends: the still is
+    // meant to be the finished state, and at T_COUNT_END the check has not
+    // formed and the glow has not started. Nothing else moves in between, so
+    // this is the same frame in every other respect.
+    render(T_DONE_END + T_BURST_IN, 1);
     root.classList.add('is-static');
   }
 
