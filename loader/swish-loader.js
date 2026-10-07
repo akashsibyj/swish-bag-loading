@@ -240,7 +240,20 @@ const TRACK_W = 0.250 * STATUS_D;                           // track stroke
 const TICK_W = 0.244 * STATUS_D;
 const SPARK_W = 0.130 * STATUS_D;
 
-const DISC_FILL = '#EDFCF3';
+/**
+ * The disc is a soft GLOW, not a flat coin. Measured across the reference's
+ * radius, the green holds at about 5.5% alpha out to 0.64, strengthens to
+ * 15% by 0.91 - a gentle bloom gathered at the rim - and is gone by 0.97.
+ * A flat fill reads as a pale disc with a hard edge; this reads as light.
+ */
+const DISC_STOPS = [
+  ['0', '0.055'],
+  ['0.64', '0.055'],
+  ['0.82', '0.105'],
+  ['0.91', '0.150'],
+  ['0.97', '0.020'],
+  ['1', '0']
+];
 const RING_GREEN = '#01DA5C';
 const RING_TRACK = '#E4E7E7';
 
@@ -275,11 +288,20 @@ for (const sx of [-1, 1]) {
  * The target is the check traversed OUT AND BACK - forward over the first
  * half of the points, backward over the second. That matters: a circle is a
  * closed loop and a check is not, and morphing a loop onto an open line
- * forces the far side of the ring to travel across the figure, which shows
- * as a knot halfway through. Doubling the check back on itself gives it the
- * same closed-loop topology, so the ring simply flattens onto it - and the
- * drawn result is identical, because the stroke retraces its own path under
- * round caps and joins.
+ * forces the far side of the ring to travel across the figure. Doubling the
+ * check back on itself gives it the same closed-loop topology, so the ring
+ * flattens onto it - and the drawn result is identical, because the stroke
+ * retraces its own path under round caps and joins.
+ *
+ * WHERE the loop starts is then chosen, not assumed. Both shapes are closed
+ * loops, so the correspondence can be rotated freely and traversed either
+ * way; of those 2N arrangements the one with the least total travel is the
+ * one that keeps the shape legible all the way through. Aligning the loop
+ * naively - the circle's top to the check's left tip - sent points across
+ * the middle and produced about a tenth of a second of shapeless lump, which
+ * is exactly the window that reads as one icon leaving and another arriving.
+ * Picking the rotation by measurement instead keeps every point near its
+ * destination, so the ring is recognisably folding for the whole morph.
  */
 const MORPH_PTS = 96;
 const TAU = Math.PI * 2;
@@ -316,8 +338,33 @@ const TICK_PTS = (() => {
     STATUS_TICK.map(([x, y]) => [x * STATUS_D, y * STATUS_D]),
     Math.ceil(MORPH_PTS / 2)
   );
-  const back = half.slice().reverse();
-  return half.concat(back).slice(0, MORPH_PTS);
+  const loop = half.concat(half.slice().reverse()).slice(0, MORPH_PTS);
+
+  // The circle every point starts from, in the same order the renderer
+  // samples it: from twelve o'clock, clockwise.
+  const ring = [];
+  for (let i = 0; i < MORPH_PTS; i++) {
+    const a = -Math.PI / 2 + (i / (MORPH_PTS - 1)) * Math.PI * 2;
+    ring.push([Math.cos(a) * RING_R, Math.sin(a) * RING_R]);
+  }
+
+  // Try every rotation, in both directions, and keep the cheapest.
+  let best = null;
+  for (const flip of [false, true]) {
+    const base = flip ? loop.slice().reverse() : loop;
+    for (let off = 0; off < MORPH_PTS; off++) {
+      let cost = 0;
+      for (let i = 0; i < MORPH_PTS; i++) {
+        const t = base[(i + off) % MORPH_PTS];
+        cost += (t[0] - ring[i][0]) ** 2 + (t[1] - ring[i][1]) ** 2;
+      }
+      if (!best || cost < best.cost) best = { cost, flip, off };
+    }
+  }
+  const base = best.flip ? loop.slice().reverse() : loop;
+  const out = [];
+  for (let i = 0; i < MORPH_PTS; i++) out.push(base[(i + best.off) % MORPH_PTS]);
+  return out;
 })();
 
 /** Ground shadow. */
@@ -853,6 +900,13 @@ function buildStage() {
   }
   defs.appendChild(gg);
 
+  // The status disc's glow. See DISC_STOPS.
+  const dg = el('radialGradient', { id: `${id}-disc` });
+  for (const [o, a] of DISC_STOPS) {
+    dg.appendChild(el('stop', { offset: o, 'stop-color': RING_GREEN, 'stop-opacity': a }));
+  }
+  defs.appendChild(dg);
+
   // One gradient per ray, along that ray's own direction, so each is solid
   // where it leaves the disc and fades to nothing at its tip - the same trick
   // the grey motion streaks use during the fall, and for the same reason:
@@ -867,7 +921,11 @@ function buildStage() {
     const rg = el('linearGradient', {
       id: `${id}-ray-${i}`, x1: sx, y1: sy, x2: 1 - sx, y2: 1 - sy
     });
-    for (const [o, a] of [['0', '1'], ['0.55', '0.85'], ['1', '0']]) {
+    // Mostly solid, softening only at the tip. The Done design draws these
+    // as crisp strokes, but a ray that ends in a hard cap reads as a bar;
+    // fading just the last quarter keeps the reference's weight while still
+    // letting them read as light, the way the grey motion streaks do.
+    for (const [o, a] of [['0', '1'], ['0.72', '1'], ['0.9', '0.72'], ['1', '0.3']]) {
       rg.appendChild(el('stop', { offset: o, 'stop-color': RING_GREEN, 'stop-opacity': a }));
     }
     defs.appendChild(rg);
@@ -954,7 +1012,7 @@ function buildStage() {
 
   ringG.appendChild(el('circle', {
     class: 'swish-loader__status-disc',
-    cx: PIVOT_X, cy: RING_CY, r: STATUS_D, fill: DISC_FILL
+    cx: PIVOT_X, cy: RING_CY, r: STATUS_D, fill: `url(#${id}-disc)`
   }));
   const ringTrack = el('circle', {
     cx: PIVOT_X, cy: RING_CY, r: RING_R,

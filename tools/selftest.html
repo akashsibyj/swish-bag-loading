@@ -410,9 +410,26 @@
               kids.map((e) => e.tagName).join(','));
             const [sparkG, disc, track, arc] = kids;
 
-            ok('the pale disc is behind everything, in all states',
-              disc.getAttribute('fill') === '#EDFCF3' &&
-              Math.abs(parseFloat(disc.getAttribute('r')) - G.STATUS_D) < 0.01);
+            ok('the disc is a soft glow, not a flat coin',
+              /^url\(#.*-disc\)$/.test(disc.getAttribute('fill')) &&
+              Math.abs(parseFloat(disc.getAttribute('r')) - G.STATUS_D) < 0.01,
+              disc.getAttribute('fill'));
+            {
+              // Measured off the reference: it holds low out to ~0.64, blooms
+              // toward the rim, and is gone by the edge. A flat fill or a
+              // plain fade-out would both fail this.
+              const id = disc.getAttribute('fill').slice(4, -1);   // keeps the '#'
+              const stops = [...q(r, 'svg').querySelectorAll(id + ' stop')]
+                .map((e) => [parseFloat(e.getAttribute('offset')),
+                             parseFloat(e.getAttribute('stop-opacity'))]);
+              ok('the glow blooms toward the rim and ends transparent',
+                stops.length >= 4 &&
+                stops[0][1] > 0 && stops[0][1] < 0.1 &&
+                Math.max(...stops.map((v) => v[1])) > 2 * stops[0][1] &&
+                stops[stops.length - 1][0] === 1 &&
+                stops[stops.length - 1][1] === 0,
+                stops.map((v) => `${v[0]}:${v[1]}`).join(' '));
+            }
             ok('the track is a full grey ring',
               track.getAttribute('fill') === 'none' &&
               !/^#0/.test(track.getAttribute('stroke')) &&
