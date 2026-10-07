@@ -239,6 +239,13 @@ const RING_W = 0.240 * STATUS_D;                           // arc stroke
 const TRACK_W = 0.250 * STATUS_D;                           // track stroke
 const TICK_W = 0.244 * STATUS_D;
 const SPARK_W = 0.130 * STATUS_D;
+/**
+ * Where a ray begins its short outward move, as a fraction of its finished
+ * reach. 0.88 puts the nearest end of the nearest ray at 1.03 of the disc's
+ * radius - outside the glow, which has faded to nothing by 0.97 - so no ray
+ * is ever behind the disc at any point in its animation.
+ */
+const SPARK_START = 0.88;
 
 /**
  * The disc is a soft GLOW, not a flat coin. Measured across the reference's
@@ -433,8 +440,9 @@ const T_DOTS_IN = 120;
  *
  *   T_COUNT_END            ring is closed, readout reads SWiSH
  *   + T_DONE_IN            morph: the ring folds into the check
- *   + T_BURST_IN           burst: the glow reaches out around it
- *                          and there is still room before T_HOLD_END
+ *   + T_DONE_GAP           the finished check, held still
+ *   + T_BURST_IN           the rays, each easing out from its own start
+ *                          and still 50ms clear of T_HOLD_END
  */
 /**
  * The indicator does not exist until the bag is DOWN AND STILL. Nothing of
@@ -445,8 +453,15 @@ const T_DOTS_IN = 120;
 const T_STATUS_IN = 180;
 
 const T_DONE_IN = 360;
-const T_BURST_IN = 160;
+/**
+ * A beat of stillness after the check is complete and before the rays start.
+ * Without it the two run back to back and read as one event; with it the
+ * check is unmistakably finished first.
+ */
+const T_DONE_GAP = 50;
+const T_BURST_IN = 140;
 const T_DONE_END = T_COUNT_END + T_DONE_IN;
+const T_BURST_START = T_DONE_END + T_DONE_GAP;
 
 const T_HOLD_END = 2700;
 const T_FADE = 240;
@@ -752,7 +767,7 @@ function solveStatus(t) {
     // than on a late slice of `morph`, so "the glow comes after the check" is
     // a property of the timeline and not of an easing curve that someone
     // could later retune into an overlap.
-    spark: easeOutCubic(clamp01((t - T_DONE_END) / T_BURST_IN))
+    spark: easeOutCubic(clamp01((t - T_BURST_START) / T_BURST_IN))
   };
 }
 
@@ -996,20 +1011,6 @@ function buildStage() {
      impact cannot squash it - it is on the ground. */
   const ringG = el('g', { class: 'swish-loader__ring', opacity: '0' });
 
-  // FIRST, so the disc paints over them: the rays start wholly inside the
-  // disc's radius and grow outward, so they are hidden by it until they
-  // clear its edge. That is what makes them read as coming from BEHIND the
-  // circle rather than being switched on beside it.
-  const sparkG = el('g', { class: 'swish-loader__status-spark', opacity: '0' });
-  const sparks = STATUS_SPARKS.map((_, i) =>
-    el('line', {
-      stroke: `url(#${id}-ray-${i})`, 'stroke-width': SPARK_W,
-      'stroke-linecap': 'round'
-    })
-  );
-  for (const ln of sparks) sparkG.appendChild(ln);
-  ringG.appendChild(sparkG);
-
   ringG.appendChild(el('circle', {
     class: 'swish-loader__status-disc',
     cx: PIVOT_X, cy: RING_CY, r: STATUS_D, fill: `url(#${id}-disc)`
@@ -1024,6 +1025,25 @@ function buildStage() {
     'stroke-linecap': 'round', 'stroke-linejoin': 'round'
   });
   ringG.appendChild(ringArc);
+
+  /* The rays sit ON TOP and clear of the disc. Each starts at its own point
+     just outside the glow, already in the open, and eases a short way
+     further out while fading up from nothing - so each reads as a ray being
+     emitted, not as something sliding out from behind the circle.
+
+     Nothing of them is on screen before their beat: the group's opacity is
+     zero until T_BURST_START, and even their starting position is outside
+     the disc, so there is nothing for the disc to have been hiding. */
+  const sparkG = el('g', { class: 'swish-loader__status-spark', opacity: '0' });
+  const sparks = STATUS_SPARKS.map((_, i) =>
+    el('line', {
+      stroke: `url(#${id}-ray-${i})`, 'stroke-width': SPARK_W,
+      'stroke-linecap': 'round'
+    })
+  );
+  for (const ln of sparks) sparkG.appendChild(ln);
+  ringG.appendChild(sparkG);
+
   svg.appendChild(ringG);
 
   /* --- scale (its own group so it can compress under the impact) ----- */
@@ -1419,11 +1439,11 @@ export function createSwishLoader(opts = {}) {
       // <line> is 0, which is the far corner of the viewBox - the group's
       // bounding box would stretch there and the indicator would measure as
       // a wide rectangle instead of a circle for the whole of the fall.
-      // Starts at 0.62, which puts even the OUTER tip at 0.91 of the disc's
-      // radius - inside it, and so behind it. The rays are therefore
-      // invisible until they have grown past the disc's edge, which is the
-      // whole point of drawing them underneath it.
-      const k = 0.62 + 0.38 * status.spark;
+      // Starts at 0.88, which puts even the INNER end at 1.03 of the disc's
+      // radius - already outside the glow, in the open. The travel is the
+      // last 12%: a short outward move, not an entrance from behind
+      // anything. SPARK_START is asserted to clear the disc.
+      const k = SPARK_START + (1 - SPARK_START) * status.spark;
       for (let i = 0; i < parts.sparks.length; i++) {
         const [p0, p1] = STATUS_SPARKS[i];
         setAttr(parts.sparks[i], 'x1', (PIVOT_X + p0[0] * k).toFixed(2));
@@ -1563,7 +1583,7 @@ export function createSwishLoader(opts = {}) {
     // meant to be the finished state, and at T_COUNT_END the check has not
     // formed and the glow has not started. Nothing else moves in between, so
     // this is the same frame in every other respect.
-    render(T_DONE_END + T_BURST_IN, 1);
+    render(T_BURST_START + T_BURST_IN, 1);
     root.classList.add('is-static');
   }
 
@@ -1791,6 +1811,8 @@ export const GEOMETRY = {
 export const TIMELINE = {
   INTRO: T_INTRO,
   DROP_END: T_DROP_END,
+  DONE_END: T_DONE_END,
+  BURST_START: T_BURST_START,
   IMPACT_END: T_IMPACT_END,
   SETTLE_END: T_SETTLE_END,
   COUNT_START: T_COUNT_START,

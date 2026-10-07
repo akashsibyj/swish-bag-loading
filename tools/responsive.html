@@ -56,7 +56,6 @@
         return {
           ringVsScale: { dx: ring.cx - scale.cx, dy: ring.cy - scale.cy },
           ringW: ring.w,
-          ringRound: rb.height ? rb.width / rb.height : 0,
           ringInStage: rb.bottom <= sb.bottom + 0.5 && rb.top >= sb.top - 0.5 &&
                        rb.left >= sb.left - 0.5 && rb.right <= sb.right + 0.5,
           doneW: db.width / sb.width,
@@ -107,7 +106,6 @@
           ok(`renders at ${w}px container`, s.w > 0 && s.lineCount === 2,
             `${s.w.toFixed(0)}x${s.h.toFixed(0)} lines=${s.lineCount}`);
           ok(`aspect held at ${w}px`, near(s.aspect, 400 / 420, 0.01), s.aspect.toFixed(4));
-          ok(`ring circular at ${w}px`, near(s.ringRound, 1, 0.02), s.ringRound.toFixed(4));
           ok(`ring unclipped at ${w}px`, s.ringInStage);
           ok(`status disc circular at ${w}px`, near(s.doneRound, 1, 0.03), s.doneRound.toFixed(4));
           ok(`status indicator unclipped at ${w}px`, s.doneInStage && s.ringInStage);

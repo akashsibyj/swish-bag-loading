@@ -401,14 +401,14 @@
             const ringG = q(r, '.swish-loader__ring');
             l.__debug.scrub(1500);           // a known weighing frame
             const kids = [...ringG.children];
-            // Rays FIRST, so the disc paints over them.
-            ok('the indicator is one group of four layers, rays underneath',
+            // Rays LAST, on top and clear of the disc - never behind it.
+            ok('the indicator is one group of four layers, rays on top',
               kids.length === 4 &&
-              kids[0].tagName.toLowerCase() === 'g' &&
-              kids[1].classList.contains('swish-loader__status-disc') &&
-              kids[3].tagName.toLowerCase() === 'polyline',
+              kids[0].classList.contains('swish-loader__status-disc') &&
+              kids[2].tagName.toLowerCase() === 'polyline' &&
+              kids[3].tagName.toLowerCase() === 'g',
               kids.map((e) => e.tagName).join(','));
-            const [sparkG, disc, track, arc] = kids;
+            const [disc, track, arc, sparkG] = kids;
 
             ok('the disc is a soft glow, not a flat coin',
               /^url\(#.*-disc\)$/.test(disc.getAttribute('fill')) &&
@@ -575,23 +575,27 @@
               morph.every((v, i) => i === 0 || v.track <= morph[i - 1].track) &&
               morph[morph.length - 1].track === 0,
               morph.map((v) => v.track).join(' '));
-            /* --- phase 3: the burst, STRICTLY after the check --- */
-            // The ordering the reference asks for is: ring closes, then the
-            // check forms, THEN the glow. Not a late slice of the morph that
-            // happens to overlap.
-            ok('no glow anywhere while the check is still forming',
+            /* --- phase 3: the rays, STRICTLY after the check --- */
+            // Circle completes -> check draws -> rays appear -> hold.
+            ok('no ray anywhere while the check is still drawing',
               morph.every((v) => v.spark === 0),
               morph.map((v) => v.spark).join(' '));
-            const burst = [2460, 2500, 2560, 2620, 2700].map(at);
-            ok('the glow eases in once the check is complete, never snaps',
+            // And a beat of stillness after it, so the two are not one event.
+            ok('the finished check is held still before the rays start',
+              at(TIMELINE.DONE_END).spark === 0 &&
+              at(TIMELINE.BURST_START - 1).spark === 0 &&
+              TIMELINE.BURST_START > TIMELINE.DONE_END,
+              `${TIMELINE.BURST_START - TIMELINE.DONE_END}ms gap`);
+            const burst = [TIMELINE.BURST_START, 2560, 2600, 2650, 2700].map(at);
+            ok('the rays fade in once the check is complete, never snap',
               burst.every((v, i) => i === 0 || v.spark >= burst[i - 1].spark) &&
               burst[0].spark === 0 && burst[burst.length - 1].spark === 1,
               burst.map((v) => v.spark.toFixed(2)).join(' '));
-            ok('the check is already finished when the glow starts',
+            ok('the check is already finished when the rays start',
               Math.abs(burst[0].dev - morph[morph.length - 1].dev) < 1e-6 &&
               burst.every((v) => Math.abs(v.dev - burst[0].dev) < 1e-6),
               'check is settled across the whole burst');
-            ok('the glow finishes before the hold fades',
+            ok('the rays finish before the hold fades',
               at(TIMELINE.HOLD_END).spark === 1);
             ok('the stroke width eases from the arc to the tick',
               Math.abs(morph[0].w - G.RING_W) < 0.01 &&
@@ -640,16 +644,32 @@
                   parseFloat(e.getAttribute('x2')) - G.VB_W / 2,
                   parseFloat(e.getAttribute('y2')) - G.RING_CY)));
               };
-              ok('at rest every ray is tucked inside the disc, so the disc hides it',
-                reach(2100) < G.STATUS_D,
-                `${reach(2100).toFixed(2)} vs disc ${G.STATUS_D}`);
-              const grow = [2460, 2500, 2560, 2620].map(reach);
-              ok('they grow outward past the rim, never jump into place',
+              // NEVER behind the circle: even at the first frame of their own
+              // animation the nearest end of every ray is outside the glow,
+              // which has faded to nothing by 0.97 of the disc radius.
+              const near = (t) => {
+                l.__debug.scrub(t);
+                return Math.min(...rays.map((e) => Math.hypot(
+                  parseFloat(e.getAttribute('x1')) - G.VB_W / 2,
+                  parseFloat(e.getAttribute('y1')) - G.RING_CY)));
+              };
+              const inner0 = near(TIMELINE.BURST_START);
+              ok('every ray starts in the open, clear of the disc',
+                inner0 > G.STATUS_D,
+                `nearest end ${(inner0 / G.STATUS_D).toFixed(3)} of the disc radius`);
+              ok('no ray is ever behind the disc, at any frame',
+                [2100, 2300, 2460, TIMELINE.BURST_START, 2560, 2620, 2700]
+                  .every((t) => near(t) > G.STATUS_D));
+              ok('they are drawn on top of the disc, not under it',
+                !!(disc.compareDocumentPosition(sparkG) & Node.DOCUMENT_POSITION_FOLLOWING));
+
+              // A short outward move, not a long slide.
+              const grow = [TIMELINE.BURST_START, 2560, 2600, 2650].map(reach);
+              ok('they ease a short way outward, never jump into place',
                 grow.every((v, i) => i === 0 || v > grow[i - 1]) &&
-                grow[0] < G.STATUS_D && grow[grow.length - 1] > G.STATUS_D,
-                grow.map((v) => v.toFixed(1)).join(' '));
-              ok('they are drawn beneath the disc',
-                !!(sparkG.compareDocumentPosition(disc) & Node.DOCUMENT_POSITION_FOLLOWING));
+                (grow[grow.length - 1] - grow[0]) / grow[grow.length - 1] < 0.2,
+                `${grow[0].toFixed(2)} -> ${grow[grow.length - 1].toFixed(2)} ` +
+                `(+${(100 * (grow[grow.length - 1] / grow[0] - 1)).toFixed(1)}%)`);
             }
             {
               const dcx = disc.getAttribute('cx'), dcy = disc.getAttribute('cy');
@@ -695,24 +715,24 @@
               const dg = q(d.root, '.swish-loader__ring');
               const span = (t) => {
                 d.__debug.scrub(t);
-                return dg.children[3].getAttribute('points').trim().split(/\s+/).length;
+                return dg.children[2].getAttribute('points').trim().split(/\s+/).length;
               };
               d.__debug.scrub(1400);
-              const s1 = dg.children[3].getAttribute('points');
+              const s1 = dg.children[2].getAttribute('points');
               d.__debug.scrub(1900);
               ok('it survives degraded mode and still advances',
-                span(1900) > 0 && dg.children[3].getAttribute('points') !== s1 &&
+                span(1900) > 0 && dg.children[2].getAttribute('points') !== s1 &&
                 ![...dg.querySelectorAll('*')].some((e) => e.hasAttribute('filter')));
               d.destroy();
             }
             {
               const rm = await make({ loop: false, reducedMotion: true });
               const rg = q(rm.root, '.swish-loader__ring');
-              ok('the reduced-motion still shows the finished check and burst',
+              ok('the reduced-motion still shows the finished check and rays',
                 +rg.getAttribute('opacity') === 1 &&
-                +rg.children[0].getAttribute('opacity') === 1 &&
-                +rg.children[2].getAttribute('opacity') === 0,
-                `burst ${rg.children[0].getAttribute('opacity')}, track ${rg.children[2].getAttribute('opacity')}`);
+                +rg.children[3].getAttribute('opacity') === 1 &&
+                +rg.children[1].getAttribute('opacity') === 0,
+                `rays ${rg.children[3].getAttribute('opacity')}, track ${rg.children[1].getAttribute('opacity')}`);
               rm.destroy();
             }
             /* --- pure in t, and free of history --- */
